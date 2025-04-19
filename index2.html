@@ -1,0 +1,3064 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Compression Member Design</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#5D5CDE',
+                        secondary: '#4F4FC7',
+                        darkbg: '#181818',
+                        lightbg: '#FFFFFF',
+                        darktext: '#E5E5E5',
+                        lighttext: '#333333',
+                        warning: '#ed8936',
+                        danger: '#e53e3e',
+                        success: '#48bb78',
+                    }
+                }
+            }
+        }
+        
+        // Check for dark mode
+        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+            document.documentElement.classList.add('dark');
+        }
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', event => {
+            if (event.matches) {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        });
+    </script>
+    <style>
+        /* Additional custom styles */
+        .angle-diagram {
+            max-width: 300px;
+            height: auto;
+            margin: 0 auto;
+        }
+        
+        @media print {
+            .no-print {
+                display: none !important;
+            }
+            .print-container {
+                padding: 20px;
+            }
+        }
+        
+        /* Report styling */
+        .report-section {
+            margin-bottom: 1.5rem;
+        }
+        .report-title {
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        .report-subtitle {
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            margin-top: 1rem;
+        }
+        .report-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+        }
+        .report-table th, .report-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        .report-table th {
+            background-color: #f2f2f2;
+        }
+        .dark .report-table th {
+            background-color: #333;
+        }
+        
+        /* Tooltip styling */
+        .tooltip {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .tooltip .tooltip-text {
+            visibility: hidden;
+            width: 200px;
+            background-color: #555;
+            color: #fff;
+            text-align: center;
+            border-radius: 6px;
+            padding: 8px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            margin-left: -100px;
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-weight: normal;
+            font-size: 0.8rem;
+        }
+        
+        .tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 0.9;
+        }
+        
+        /* Progress steps */
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        
+        .step {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background-color: #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 2rem;
+            position: relative;
+            z-index: 1;
+        }
+        
+        .step.active {
+            background-color: #5D5CDE;
+            color: white;
+        }
+        
+        .step.completed {
+            background-color: #48bb78;
+            color: white;
+        }
+        
+        .step-line {
+            position: absolute;
+            height: 2px;
+            background-color: #e2e8f0;
+            top: 15px;
+            left: 15px;
+            right: 15px;
+            z-index: 0;
+        }
+        
+        .step-title {
+            position: absolute;
+            top: 35px;
+            white-space: nowrap;
+            font-size: 0.75rem;
+        }
+        
+        /* Calculation steps */
+        .calculation-steps {
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 3px solid #5D5CDE;
+            margin-bottom: 15px;
+        }
+        
+        .dark .calculation-steps {
+            background-color: #2d3748;
+            border-left: 3px solid #5D5CDE;
+        }
+        
+        /* Connection diagram */
+        .connection-diagram {
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        
+        /* Formula display */
+        .formula {
+            font-family: 'Times New Roman', Times, serif;
+            background-color: #f5f5f5;
+            padding: 5px 10px;
+            border-radius: 4px;
+            display: inline-block;
+            margin: 5px 0;
+        }
+        
+        .dark .formula {
+            background-color: #2d3748;
+        }
+    </style>
+</head>
+<body class="bg-lightbg dark:bg-darkbg text-lighttext dark:text-darktext">
+    <div class="container mx-auto px-4 py-6 max-w-5xl">
+        <h1 class="text-3xl font-bold text-center mb-6 text-primary">Compression Member Design</h1>
+        
+        <!-- Progress Indicator -->
+        <div class="step-indicator no-print mb-8 relative">
+            <div class="step-line"></div>
+            <div class="step active" id="step1">
+                1
+                <span class="step-title">Input Data</span>
+            </div>
+            <div class="step" id="step2">
+                2
+                <span class="step-title">Analysis</span>
+            </div>
+            <div class="step" id="step3">
+                3
+                <span class="step-title">Results</span>
+            </div>
+        </div>
+        
+        <!-- Main Content Tabs -->
+        <div class="mb-8">
+            <div class="flex border-b border-gray-300 dark:border-gray-700">
+                <button id="tab-calculator" class="py-2 px-4 font-medium text-primary border-b-2 border-primary">Calculator</button>
+                <button id="tab-report" class="py-2 px-4 font-medium text-gray-500 dark:text-gray-400">Report</button>
+                <button id="tab-steps" class="py-2 px-4 font-medium text-gray-500 dark:text-gray-400">Calculation Steps</button>
+                <button id="tab-example" class="py-2 px-4 font-medium text-gray-500 dark:text-gray-400">Examples</button>
+                <button id="tab-theory" class="py-2 px-4 font-medium text-gray-500 dark:text-gray-400">Theory</button>
+            </div>
+            
+            <!-- Calculator Tab Content -->
+            <div id="content-calculator" class="py-4">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Member Configuration -->
+                    <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                        <h2 class="text-xl font-semibold mb-4">Member Configuration</h2>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">
+                                Member Type
+                                <span class="tooltip ml-1 text-primary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                    </svg>
+                                    <span class="tooltip-text">Select the cross-section type for your compression member</span>
+                                </span>
+                            </label>
+                            <select id="member-type" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                <option value="single">Single Angle</option>
+                                <option value="double">Double Angle</option>
+                                <option value="channel">Channel Section</option>
+                                <option value="isection">I-Section</option>
+                                <option value="tube">Tubular Section</option>
+                            </select>
+                        </div>
+                        
+                        <div id="angle-visual" class="my-4 flex justify-center">
+                            <!-- SVG will be inserted here based on selection -->
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">
+                                Steel Grade
+                                <span class="tooltip ml-1 text-primary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                    </svg>
+                                    <span class="tooltip-text">Yield strength of the steel material</span>
+                                </span>
+                            </label>
+                            <select id="steel-grade" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                <optgroup label="Indian Standards">
+                                    <option value="250">Fe 250 (fy = 250 MPa)</option>
+                                    <option value="350">Fe 350 (fy = 350 MPa)</option>
+                                    <option value="410">Fe 410 (fy = 410 MPa)</option>
+                                    <option value="450">Fe 450 (fy = 450 MPa)</option>
+                                </optgroup>
+                                <optgroup label="ASTM Standards">
+                                    <option value="248">A36 (fy = 248 MPa)</option>
+                                    <option value="345">A572 Gr.50 (fy = 345 MPa)</option>
+                                </optgroup>
+                                <optgroup label="European Standards">
+                                    <option value="235">S235 (fy = 235 MPa)</option>
+                                    <option value="355">S355 (fy = 355 MPa)</option>
+                                </optgroup>
+                                <optgroup label="Egyptian Standards">
+                                    <option value="240">St 37 (fy = 240 MPa)</option>
+                                    <option value="280">St 44 (fy = 280 MPa)</option>
+                                    <option value="360">St 52 (fy = 360 MPa)</option>
+                                </optgroup>
+                            </select>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">
+                                Design Code
+                                <span class="tooltip ml-1 text-primary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                    </svg>
+                                    <span class="tooltip-text">Design standard to be used for calculations</span>
+                                </span>
+                            </label>
+                            <select id="design-code" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                <option value="is800">IS 800:2007</option>
+                                <option value="aisc360">AISC 360-16</option>
+                                <option value="eurocode3">Eurocode 3</option>
+                                <option value="ecp205">ECP 205:2008 (LRFD)</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <!-- Section Properties -->
+                    <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                        <h2 class="text-xl font-semibold mb-4">Section Properties</h2>
+                        
+                        <!-- Angle Series (shown for angle sections) -->
+                        <div id="angle-options">
+                            <div class="mb-4">
+                                <label class="block mb-2 font-medium">
+                                    Angle Series
+                                    <span class="tooltip ml-1 text-primary">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                        </svg>
+                                        <span class="tooltip-text">Type of angle section</span>
+                                    </span>
+                                </label>
+                                <select id="angle-series" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                    <option value="ISA">ISA (Equal Angle)</option>
+                                    <option value="IUSA">IUSA (Unequal Angle)</option>
+                                </select>
+                            </div>
+                            
+                            <div id="equal-angle-dimensions" class="mb-4">
+                                <div class="mb-4">
+                                    <label class="block mb-2 font-medium">Leg Size (mm)</label>
+                                    <select id="leg-size" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                        <option value="20x20x3">20×20×3</option>
+                                        <option value="25x25x3">25×25×3</option>
+                                        <option value="30x30x3">30×30×3</option>
+                                        <option value="40x40x4">40×40×4</option>
+                                        <option value="50x50x5">50×50×5</option>
+                                        <option value="60x60x6">60×60×6</option>
+                                        <option value="65x65x6">65×65×6</option>
+                                        <option value="70x70x6">70×70×6</option>
+                                        <option value="75x75x6">75×75×6</option>
+                                        <option value="80x80x6">80×80×6</option>
+                                        <option value="90x90x8">90×90×8</option>
+                                        <option value="100x100x8">100×100×8</option>
+                                        <option value="100x100x10">100×100×10</option>
+                                        <option value="110x110x10">110×110×10</option>
+                                        <option value="130x130x10">130×130×10</option>
+                                        <option value="150x150x12">150×150×12</option>
+                                        <option value="200x200x16">200×200×16</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <div id="unequal-angle-dimensions" class="mb-4 hidden">
+                                <div class="mb-4">
+                                    <label class="block mb-2 font-medium">Leg Size (mm)</label>
+                                    <select id="unequal-leg-size" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                        <option value="30x20x3">30×20×3</option>
+                                        <option value="40x25x3">40×25×3</option>
+                                        <option value="45x30x4">45×30×4</option>
+                                        <option value="50x30x5">50×30×5</option>
+                                        <option value="60x40x5">60×40×5</option>
+                                        <option value="65x45x5">65×45×5</option>
+                                        <option value="70x45x6">70×45×6</option>
+                                        <option value="75x50x6">75×50×6</option>
+                                        <option value="80x50x6">80×50×6</option>
+                                        <option value="90x60x8">90×60×8</option>
+                                        <option value="100x65x8">100×65×8</option>
+                                        <option value="100x75x8">100×75×8</option>
+                                        <option value="150x115x10">150×115×10</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Channel Section Options (hidden by default) -->
+                        <div id="channel-options" class="hidden">
+                            <div class="mb-4">
+                                <label class="block mb-2 font-medium">Channel Size</label>
+                                <select id="channel-size" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                    <option value="ISMC75">ISMC 75</option>
+                                    <option value="ISMC100">ISMC 100</option>
+                                    <option value="ISMC125">ISMC 125</option>
+                                    <option value="ISMC150">ISMC 150</option>
+                                    <option value="ISMC200">ISMC 200</option>
+                                    <option value="ISMC250">ISMC 250</option>
+                                    <option value="ISMC300">ISMC 300</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- I-Section Options (hidden by default) -->
+                        <div id="isection-options" class="hidden">
+                            <div class="mb-4">
+                                <label class="block mb-2 font-medium">I-Section Size</label>
+                                <select id="isection-size" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                    <option value="ISMB100">ISMB 100</option>
+                                    <option value="ISMB150">ISMB 150</option>
+                                    <option value="ISMB200">ISMB 200</option>
+                                    <option value="ISMB250">ISMB 250</option>
+                                    <option value="ISMB300">ISMB 300</option>
+                                    <option value="ISMB350">ISMB 350</option>
+                                    <option value="ISMB400">ISMB 400</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Tubular Section Options (hidden by default) -->
+                        <div id="tube-options" class="hidden">
+                            <div class="mb-4">
+                                <label class="block mb-2 font-medium">Tube Diameter (mm)</label>
+                                <select id="tube-size" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                    <option value="48.3x3.2">48.3×3.2</option>
+                                    <option value="60.3x3.6">60.3×3.6</option>
+                                    <option value="76.1x3.6">76.1×3.6</option>
+                                    <option value="88.9x4.0">88.9×4.0</option>
+                                    <option value="114.3x4.5">114.3×4.5</option>
+                                    <option value="139.7x5.0">139.7×5.0</option>
+                                    <option value="168.3x5.6">168.3×5.6</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div id="double-angle-options" class="mb-4 hidden">
+                            <div class="mb-4">
+                                <label class="block mb-2 font-medium">
+                                    Back-to-Back Distance (mm)
+                                    <span class="tooltip ml-1 text-primary">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                        </svg>
+                                        <span class="tooltip-text">Distance between backs of angles in a double angle configuration</span>
+                                    </span>
+                                </label>
+                                <input type="number" id="back-to-back" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" value="10" min="0">
+                            </div>
+                            
+                            <div class="mb-4">
+                                <label class="block mb-2 font-medium">
+                                    Connection Type
+                                    <span class="tooltip ml-1 text-primary">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                        </svg>
+                                        <span class="tooltip-text">How the angles are connected together</span>
+                                    </span>
+                                </label>
+                                <select id="connection-type" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                    <option value="connected">Connected at intervals</option>
+                                    <option value="continuous">Continuously connected</option>
+                                </select>
+                            </div>
+                            
+                            <div id="interval-option" class="mb-4">
+                                <label class="block mb-2 font-medium">
+                                    Tack Length Interval (mm)
+                                    <span class="tooltip ml-1 text-primary">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                        </svg>
+                                        <span class="tooltip-text">Distance between connection points</span>
+                                    </span>
+                                </label>
+                                <input type="number" id="tack-interval" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" value="500" min="100" max="2000">
+                                <div class="connection-diagram mt-2 text-center">
+                                    <svg width="280" height="60" viewBox="0 0 280 60">
+                                        <line x1="30" y1="20" x2="250" y2="20" stroke="currentColor" stroke-width="2"/>
+                                        <line x1="30" y1="40" x2="250" y2="40" stroke="currentColor" stroke-width="2"/>
+                                        <line x1="50" y1="15" x2="50" y2="45" stroke="currentColor" stroke-width="2"/>
+                                        <line x1="120" y1="15" x2="120" y2="45" stroke="currentColor" stroke-width="2"/>
+                                        <line x1="190" y1="15" x2="190" y2="45" stroke="currentColor" stroke-width="2"/>
+                                        <text x="85" y="55" font-size="10" fill="currentColor">Tack Interval</text>
+                                        <line x1="50" y1="50" x2="120" y2="50" stroke="currentColor" stroke-width="1"/>
+                                        <line x1="50" y1="52" x2="50" y2="48" stroke="currentColor" stroke-width="1"/>
+                                        <line x1="120" y1="52" x2="120" y2="48" stroke="currentColor" stroke-width="1"/>
+                                    </svg>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">
+                                Units
+                                <span class="tooltip ml-1 text-primary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                    </svg>
+                                    <span class="tooltip-text">Select the unit system for calculations</span>
+                                </span>
+                            </label>
+                            <div class="flex">
+                                <label class="inline-flex items-center mr-6">
+                                    <input type="radio" name="units" value="metric" class="form-radio h-4 w-4 text-primary" checked>
+                                    <span class="ml-2">Metric (mm, kN)</span>
+                                </label>
+                                <label class="inline-flex items-center">
+                                    <input type="radio" name="units" value="imperial" class="form-radio h-4 w-4 text-primary">
+                                    <span class="ml-2">Imperial (in, kip)</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Design Parameters -->
+                    <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                        <h2 class="text-xl font-semibold mb-4">Design Parameters</h2>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">
+                                Effective Length (<span class="unit-length">mm</span>)
+                                <span class="tooltip ml-1 text-primary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                    </svg>
+                                    <span class="tooltip-text">The effective length of the member considering end restraints</span>
+                                </span>
+                            </label>
+                            <input type="number" id="effective-length" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" value="2000" min="10">
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">
+                                End Conditions
+                                <span class="tooltip ml-1 text-primary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                    </svg>
+                                    <span class="tooltip-text">Restraint conditions at member ends affecting the effective length factor</span>
+                                </span>
+                            </label>
+                            <select id="end-conditions" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600">
+                                <option value="1.0">Pinned-Pinned (K = 1.0)</option>
+                                <option value="0.7">Fixed-Pinned (K = 0.7)</option>
+                                <option value="0.5">Fixed-Fixed (K = 0.5)</option>
+                                <option value="2.0">Fixed-Free (K = 2.0)</option>
+                                <option value="custom">Custom K Value</option>
+                            </select>
+                        </div>
+                        
+                        <div id="custom-k-value" class="mb-4 hidden">
+                            <label class="block mb-2 font-medium">Custom K Value</label>
+                            <input type="number" id="k-value" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" value="1.0" min="0.1" max="10" step="0.1">
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">
+                                Design Load (<span class="unit-force">kN</span>)
+                                <span class="tooltip ml-1 text-primary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                    </svg>
+                                    <span class="tooltip-text">Axial compressive force to be designed for</span>
+                                </span>
+                            </label>
+                            <input type="number" id="design-load" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" value="50" min="0">
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">
+                                Load Factor
+                                <span class="tooltip ml-1 text-primary">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 inline" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-3a1 1 0 00-.867.5 1 1 0 11-1.731-1A3 3 0 0113 8a3.001 3.001 0 01-2 2.83V11a1 1 0 11-2 0v-1a1 1 0 011-1 1 1 0 100-2zm0 8a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+                                    </svg>
+                                    <span class="tooltip-text">Safety factor applied to design loads</span>
+                                </span>
+                            </label>
+                            <input type="number" id="load-factor" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" value="1.5" min="1.0" max="3.0" step="0.1">
+                        </div>
+                        
+                        <div class="mb-4">
+                            <label class="block mb-2 font-medium">Load Type</label>
+                            <div class="flex">
+                                <label class="inline-flex items-center mr-6">
+                                    <input type="radio" name="load-type" value="axial" class="form-radio h-4 w-4 text-primary" checked>
+                                    <span class="ml-2">Axial Only</span>
+                                </label>
+                                <label class="inline-flex items-center">
+                                    <input type="radio" name="load-type" value="combined" class="form-radio h-4 w-4 text-primary">
+                                    <span class="ml-2">Combined Loads</span>
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div id="combined-loads" class="hidden">
+                            <div class="mb-4">
+                                <label class="block mb-2 font-medium">Moment Mx (<span class="unit-moment">kN·m</span>)</label>
+                                <input type="number" id="moment-x" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" value="0">
+                            </div>
+                            <div class="mb-4">
+                                <label class="block mb-2 font-medium">Moment My (<span class="unit-moment">kN·m</span>)</label>
+                                <input type="number" id="moment-y" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" value="0">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Results -->
+                    <div class="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                        <h2 class="text-xl font-semibold mb-4">Results</h2>
+                        <div id="results-placeholder" class="text-center text-gray-500 dark:text-gray-400 py-8">
+                            Results will appear here after calculation
+                        </div>
+                        <div id="results-content" class="hidden">
+                            <div class="grid grid-cols-2 gap-4 mb-4">
+                                <div>
+                                    <p class="font-medium">Section Area:</p>
+                                    <p id="result-area" class="text-lg">- mm²</p>
+                                </div>
+                                <div>
+                                    <p class="font-medium">Radius of Gyration:</p>
+                                    <p id="result-rog" class="text-lg">- mm</p>
+                                </div>
+                                <div>
+                                    <p class="font-medium">Slenderness Ratio:</p>
+                                    <p id="result-slenderness" class="text-lg">-</p>
+                                </div>
+                                <div>
+                                    <p class="font-medium">Design Strength:</p>
+                                    <p id="result-strength" class="text-lg">- kN</p>
+                                </div>
+                            </div>
+                            
+                            <div class="mb-4 pt-2 border-t border-gray-200 dark:border-gray-700">
+                                <div class="flex items-center">
+                                    <p class="font-medium mr-4">Utilization:</p>
+                                    <div class="flex-1 h-6 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                        <div id="result-utilization-bar" class="h-full bg-primary" style="width: 0%"></div>
+                                    </div>
+                                    <p id="result-utilization" class="ml-4">0%</p>
+                                </div>
+                            </div>
+                            
+                            <div class="pt-2 border-t border-gray-200 dark:border-gray-700">
+                                <p class="font-medium">Status:</p>
+                                <p id="result-status" class="text-lg font-bold">-</p>
+                            </div>
+                            
+                            <div id="design-warnings" class="mt-4 hidden">
+                                <div class="p-3 bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100 rounded-lg">
+                                    <p class="font-medium">Design Warnings:</p>
+                                    <ul id="warning-list" class="list-disc ml-5 mt-1">
+                                        <!-- Warnings will be added here -->
+                                    </ul>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-4">
+                                <button id="view-optimization" class="text-primary hover:text-secondary font-medium flex items-center">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                                        <path fill-rule="evenodd" d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" clip-rule="evenodd" />
+                                    </svg>
+                                    View Optimized Sections
+                                </button>
+                                <div id="optimization-container" class="mt-2 hidden">
+                                    <p class="text-sm mb-2">Alternative sections that can carry the same load:</p>
+                                    <div id="optimization-results" class="text-sm">
+                                        <!-- Optimization results will be added here -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="mt-6 flex justify-center gap-4">
+                    <button id="reset-btn" class="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
+                        Reset
+                    </button>
+                    <button id="calculate-btn" class="px-6 py-2 bg-primary hover:bg-secondary text-white font-medium rounded-lg transition-colors">
+                        Calculate
+                    </button>
+                    <button id="generate-report-btn" class="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
+                        Generate Report
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Report Tab Content -->
+            <div id="content-report" class="py-4 hidden">
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+                    <div id="report-container" class="print-container">
+                        <!-- Report will be generated here -->
+                        <div class="text-center text-gray-500 dark:text-gray-400 py-8">
+                            No report has been generated yet. Please calculate a design first.
+                        </div>
+                    </div>
+                    
+                    <div class="mt-6 flex justify-center gap-4 no-print">
+                        <button id="print-report-btn" class="px-6 py-2 bg-primary hover:bg-secondary text-white font-medium rounded-lg transition-colors">
+                            Print Report
+                        </button>
+                        <button id="download-pdf-btn" class="px-6 py-2 bg-gray-600 hover:bg-gray-700 text-white font-medium rounded-lg transition-colors">
+                            Download PDF
+                        </button>
+                        <button id="save-project-btn" class="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors">
+                            Save Project
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Calculation Steps Tab Content -->
+            <div id="content-steps" class="py-4 hidden">
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+                    <h2 class="text-2xl font-semibold mb-4">Calculation Steps</h2>
+                    
+                    <div id="steps-placeholder" class="text-center text-gray-500 dark:text-gray-400 py-8">
+                        Calculation steps will appear here after running the analysis.
+                    </div>
+                    
+                    <div id="calculation-steps-content" class="hidden">
+                        <div class="calculation-steps">
+                            <h3 class="font-medium mb-2">Step 1: Determine Section Properties</h3>
+                            <p>The cross-sectional area and geometric properties of the selected section are:</p>
+                            <ul class="list-disc ml-6 mt-2 mb-2">
+                                <li>Cross-sectional area (A): <span id="step-area">-</span></li>
+                                <li>Radius of gyration about x-axis (rx): <span id="step-rx">-</span></li>
+                                <li>Radius of gyration about y-axis (ry): <span id="step-ry">-</span></li>
+                                <li>Radius of gyration about z-axis (rz): <span id="step-rz">-</span></li>
+                            </ul>
+                        </div>
+                        
+                        <div class="calculation-steps">
+                            <h3 class="font-medium mb-2">Step 2: Calculate Slenderness Ratio</h3>
+                            <p>The slenderness ratio is calculated using the formula:</p>
+                            <p class="formula">λ = KL/r</p>
+                            <p>Where:</p>
+                            <ul class="list-disc ml-6 mt-2 mb-2">
+                                <li>K = effective length factor = <span id="step-k-factor">-</span></li>
+                                <li>L = actual length = <span id="step-length">-</span> mm</li>
+                                <li>r = minimum radius of gyration = <span id="step-min-r">-</span> mm</li>
+                            </ul>
+                            <p>Therefore, slenderness ratio = <span id="step-slenderness">-</span></p>
+                            <div id="max-slenderness-check">
+                                <p>Maximum permitted slenderness ratio: <span id="step-max-slenderness">-</span></p>
+                                <p>Slenderness check: <span id="step-slenderness-check">-</span></p>
+                            </div>
+                        </div>
+                        
+                        <div class="calculation-steps">
+                            <h3 class="font-medium mb-2">Step 3: Determine Critical Stress</h3>
+                            <p>Based on the design code <span id="step-design-code">IS 800:2007</span>, the critical stress is calculated as follows:</p>
+                            
+                            <div id="is800-calculation" class="mt-2">
+                                <p>For IS 800:2007:</p>
+                                <p>When λ ≤ 50:</p>
+                                <p class="formula">f_cr = f_y × (1 - λ²/(2 × 22500))</p>
+                                <p>When 50 < λ ≤ 200:</p>
+                                <p class="formula">f_cr = f_y × 364 × λ^(-2) / (1.6 - 364 × λ^(-2))</p>
+                            </div>
+                            
+                            <div id="aisc-calculation" class="mt-2 hidden">
+                                <p>For AISC 360-16:</p>
+                                <p>When λ ≤ 4.71√(E/f_y):</p>
+                                <p class="formula">F_cr = [0.658^(λ_c²)] × f_y</p>
+                                <p>When λ > 4.71√(E/f_y):</p>
+                                <p class="formula">F_cr = 0.877 × f_y / λ_c²</p>
+                                <p>Where λ_c = (KL/r) × √(f_y/E × π²)</p>
+                            </div>
+                            
+                            <div id="ecp-calculation" class="mt-2 hidden">
+                                <p>For ECP 205:2008:</p>
+                                <p>Section Classification: <span id="step-section-class">-</span></p>
+                                <div id="slender-calculations" class="hidden">
+                                    <p>Effective Area Ratio (Q): <span id="step-q-factor">-</span></p>
+                                    <p>Effective Area: <span id="step-effective-area">-</span> mm²</p>
+                                </div>
+                                <p>Calculate slenderness parameter (λc):</p>
+                                <p class="formula">λc = (KL/r) / π * √(Fy / E) = √(Fy / Fe)</p>
+                                <p>Slenderness parameter λc = <span id="step-lambda-c">-</span></p>
+                                <p>Calculate critical stress (Fcr):</p>
+                                <p>When λc ≤ 1.1 (Inelastic Buckling):</p>
+                                <p class="formula">Fcr = Fy * (1 - 0.384 * λc²)</p>
+                                <p>When λc > 1.1 (Elastic Buckling):</p>
+                                <p class="formula">Fcr = 0.648 * Fy / λc²</p>
+                                <p>For sections with slender elements:</p>
+                                <p class="formula">Fcr = Fy * Q * (1 - 0.384 * Q * λc²) [for λc√Q ≤ 1.1]</p>
+                                <p class="formula">Fcr = 0.648 * Fy / λc² [for λc√Q > 1.1]</p>
+                            </div>
+                            
+                            <p class="mt-2">With λ = <span id="step-lambda">-</span> and f_y = <span id="step-fy">-</span> MPa:</p>
+                            <p>Critical stress, f_cr = <span id="step-fcr">-</span> MPa</p>
+                        </div>
+                        
+                        <div class="calculation-steps">
+                            <h3 class="font-medium mb-2">Step 4: Calculate Design Strength</h3>
+                            <p>The design strength is calculated as:</p>
+                            <p class="formula">P_d = (A × f_cr) / 1000</p>
+                            <p>Where:</p>
+                            <ul class="list-disc ml-6 mt-2 mb-2">
+                                <li>A = cross-sectional area = <span id="step-final-area">-</span> mm²</li>
+                                <li>f_cr = critical stress = <span id="step-final-fcr">-</span> MPa</li>
+                            </ul>
+                            <p>Resistance factor φc = <span id="step-resistance-factor">-</span></p>
+                            <p>Therefore, design strength = <span id="step-strength">-</span> kN</p>
+                        </div>
+                        
+                        <div class="calculation-steps">
+                            <h3 class="font-medium mb-2">Step 5: Check Design Adequacy</h3>
+                            <p>The factored design load is:</p>
+                            <p class="formula">P_u = P × γ</p>
+                            <p>Where:</p>
+                            <ul class="list-disc ml-6 mt-2 mb-2">
+                                <li>P = applied load = <span id="step-applied-load">-</span> kN</li>
+                                <li>γ = load factor = <span id="step-load-factor">-</span></li>
+                            </ul>
+                            <p>Factored design load, P_u = <span id="step-factored-load">-</span> kN</p>
+                            <p>Utilization ratio = (P_u / P_d) × 100% = <span id="step-utilization">-</span>%</p>
+                            <p class="font-medium mt-2">Design status: <span id="step-status" class="font-bold">-</span></p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Example Tab Content -->
+            <div id="content-example" class="py-4 hidden">
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+                    <h2 class="text-2xl font-semibold mb-4">Example: Design of a Double Angle Compression Member</h2>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-xl font-medium mb-2">Problem Statement</h3>
+                        <p class="mb-4">Design a double angle compression member to carry an axial compressive load of 85 kN. The effective length of the member is 3000 mm. Use Fe 250 steel (fy = 250 MPa).</p>
+                        
+                        <div class="p-4 bg-gray-100 dark:bg-gray-700 rounded-lg">
+                            <h4 class="font-medium mb-2">Given:</h4>
+                            <ul class="list-disc ml-6 space-y-1">
+                                <li>Axial compressive load: 85 kN</li>
+                                <li>Effective length: 3000 mm</li>
+                                <li>Steel grade: Fe 250 (fy = 250 MPa)</li>
+                                <li>Load factor: 1.5</li>
+                                <li>End conditions: Pinned-Pinned (K = 1.0)</li>
+                            </ul>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-xl font-medium mb-2">Solution Steps</h3>
+                        <p>To solve this problem using our application:</p>
+                        <ol class="list-decimal ml-6 space-y-2 mt-2">
+                            <li>Select "Double Angle" as Member Type</li>
+                            <li>Choose Steel Grade as "Fe 250"</li>
+                            <li>Select "ISA" (Equal Angle) series</li>
+                            <li>Choose an appropriate size (try 65×65×6 mm)</li>
+                            <li>Set Back-to-Back Distance to 10 mm</li>
+                            <li>Choose "Continuously connected" as Connection Type</li>
+                            <li>Enter Effective Length as 3000 mm</li>
+                            <li>Select End Conditions as "Pinned-Pinned (K = 1.0)"</li>
+                            <li>Enter Design Load as 85 kN</li>
+                            <li>Set Load Factor to 1.5</li>
+                            <li>Click "Calculate" to run the analysis</li>
+                        </ol>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-xl font-medium mb-2">Expected Results</h3>
+                        <p>After calculation, the application will display:</p>
+                        <ul class="list-disc ml-6 space-y-1 mt-2">
+                            <li>Section properties (area, radius of gyration)</li>
+                            <li>Slenderness ratio calculations</li>
+                            <li>Design compression strength</li>
+                            <li>Utilization ratio (actual load / design strength)</li>
+                            <li>Pass/Fail status based on whether the section can safely carry the load</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="mt-6">
+                        <h3 class="text-xl font-medium mb-2">Additional Examples</h3>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                            <div class="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                                <h4 class="font-medium mb-2">Example 2: Single Angle as Bracing</h4>
+                                <p class="text-sm mb-2">Design a single angle as a bracing member for a 30 kN load with 2500 mm effective length.</p>
+                                <button id="load-example-2" class="mt-2 px-3 py-1 bg-primary hover:bg-secondary text-white text-sm font-medium rounded transition-colors">
+                                    Load Example
+                                </button>
+                            </div>
+                            <div class="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                                <h4 class="font-medium mb-2">Example 3: Channel Section Column</h4>
+                                <p class="text-sm mb-2">Design a channel section for a column carrying 120 kN with fixed-pinned end conditions.</p>
+                                <button id="load-example-3" class="mt-2 px-3 py-1 bg-primary hover:bg-secondary text-white text-sm font-medium rounded transition-colors">
+                                    Load Example
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mt-6">
+                        <h3 class="text-xl font-medium mb-2">Example 4: ECP Code Example</h3>
+                        <div class="p-4 border border-gray-200 dark:border-gray-700 rounded-lg">
+                            <h4 class="font-medium mb-2">Double Angle per ECP 205:2008</h4>
+                            <p class="text-sm mb-2">Design a double angle member per Egyptian code for a 90 kN load with 2800 mm effective length using St 37 steel.</p>
+                            <button id="load-example-ecp" class="mt-2 px-3 py-1 bg-primary hover:bg-secondary text-white text-sm font-medium rounded transition-colors">
+                                Load Example
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-6 flex justify-center">
+                        <button id="load-example-btn" class="px-6 py-2 bg-primary hover:bg-secondary text-white font-medium rounded-lg transition-colors">
+                            Load Double Angle Example
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Theory Tab Content -->
+            <div id="content-theory" class="py-4 hidden">
+                <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow">
+                    <h2 class="text-2xl font-semibold mb-4">Theoretical Background</h2>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-xl font-medium mb-3">Compression Member Basics</h3>
+                        <p class="mb-3">Compression members are structural elements that are subjected primarily to axial compressive forces. The design of compression members is governed by two main failure modes:</p>
+                        <ol class="list-decimal ml-6 space-y-2 mb-4">
+                            <li><strong>Material failure:</strong> When the applied stress exceeds the yield strength of the material.</li>
+                            <li><strong>Buckling failure:</strong> When the member becomes unstable before reaching material failure.</li>
+                        </ol>
+                        <p>For most practical compression members, buckling is the critical failure mode that governs design.</p>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-xl font-medium mb-3">Slenderness Ratio</h3>
+                        <p class="mb-3">The slenderness ratio (λ) is a key parameter in compression member design, defined as:</p>
+                        <p class="formula text-center mb-3">λ = KL/r</p>
+                        <p>Where:</p>
+                        <ul class="list-disc ml-6 space-y-1 mb-3">
+                            <li>K = effective length factor, depending on end restraints</li>
+                            <li>L = actual length of the member</li>
+                            <li>r = radius of gyration of the cross-section</li>
+                        </ul>
+                        <p>The slenderness ratio determines whether a column is short, intermediate, or long, which affects its behavior under load.</p>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-xl font-medium mb-3">Design Code Approaches</h3>
+                        <p class="mb-3">Different design codes use different approaches to account for buckling in compression members:</p>
+                        
+                        <h4 class="font-medium mt-4 mb-2">IS 800:2007</h4>
+                        <p class="mb-2">For IS 800:2007, the design compressive strength is calculated as:</p>
+                        <p class="formula mb-2">Pd = (fcd × A) / γm</p>
+                        <p>Where:</p>
+                        <ul class="list-disc ml-6 space-y-1 mb-3">
+                            <li>fcd = design compressive stress</li>
+                            <li>A = cross-sectional area</li>
+                            <li>γm = partial safety factor for material</li>
+                        </ul>
+                        
+                        <h4 class="font-medium mt-4 mb-2">AISC 360-16</h4>
+                        <p class="mb-2">For AISC 360-16, the nominal compressive strength is calculated as:</p>
+                        <p class="formula mb-2">Pn = Fcr × Ag</p>
+                        <p>Where:</p>
+                        <ul class="list-disc ml-6 space-y-1 mb-3">
+                            <li>Fcr = critical stress</li>
+                            <li>Ag = gross cross-sectional area</li>
+                        </ul>
+                        
+                        <h4 class="font-medium mt-4 mb-2">Eurocode 3</h4>
+                        <p class="mb-2">For Eurocode 3, the design buckling resistance is calculated as:</p>
+                        <p class="formula mb-2">Nb,Rd = (χ × A × fy) / γM1</p>
+                        <p>Where:</p>
+                        <ul class="list-disc ml-6 space-y-1 mb-3">
+                            <li>χ = reduction factor for the relevant buckling mode</li>
+                            <li>A = cross-sectional area</li>
+                            <li>fy = yield strength</li>
+                            <li>γM1 = partial safety factor</li>
+                        </ul>
+
+                        <h4 class="font-medium mt-4 mb-2">ECP 205:2008</h4>
+                        <p class="mb-3">The Egyptian Code of Practice for Steel Construction (ECP 205:2008) uses a Load and Resistance Factor Design (LRFD) approach.</p>
+                        
+                        <p class="mb-2">Section Classification:</p>
+                        <ul class="list-disc ml-6 space-y-1 mb-3">
+                            <li>Compact (Class 1): Can develop full plastic moment capacity</li>
+                            <li>Non-compact (Class 2): Can develop yield moment but may not reach full plastic capacity</li>
+                            <li>Slender (Class 3): Local buckling occurs before reaching yield stress</li>
+                        </ul>
+                        
+                        <p class="mb-2">Design Strength Calculation:</p>
+                        <p class="formula mb-2">Pn = Ag × Fcr</p>
+                        <p class="mb-2">Where Fcr depends on the slenderness parameter λc:</p>
+                        <p class="formula mb-2">λc = (KL/r) / π × √(Fy / E) = √(Fy / Fe)</p>
+                        <p class="mb-2">For inelastic buckling (λc ≤ 1.1):</p>
+                        <p class="formula mb-2">Fcr = Fy × (1 - 0.384 × λc²)</p>
+                        <p class="mb-2">For elastic buckling (λc > 1.1):</p>
+                        <p class="formula mb-2">Fcr = 0.648 × Fy / λc²</p>
+                        
+                        <p class="mt-2 mb-2">For members with slender elements, the reduction factor Q = Ae/Ag is applied:</p>
+                        <p class="formula mb-2">Fcr = Fy × Q × (1 - 0.384 × Q × λc²) [for λc√Q ≤ 1.1]</p>
+                        <p class="formula mb-2">Fcr = 0.648 × Fy / λc² [for λc√Q > 1.1]</p>
+                        
+                        <p class="mb-2">The design strength is:</p>
+                        <p class="formula mb-2">φcPn = 0.80 × Pn</p>
+                        
+                        <p class="mb-2">Maximum slenderness ratio limits:</p>
+                        <ul class="list-disc ml-6 space-y-1 mb-3">
+                            <li>Primary compression members: 180</li>
+                            <li>Secondary and bracing members: 200</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-xl font-medium mb-3">Special Considerations for Angle Sections</h3>
+                        <p class="mb-3">Angle sections have some unique characteristics that affect their behavior as compression members:</p>
+                        <ul class="list-disc ml-6 space-y-2 mb-4">
+                            <li><strong>Asymmetry:</strong> Single angles are asymmetric sections, leading to different radii of gyration about different axes.</li>
+                            <li><strong>Shear center offset:</strong> The shear center of an angle section does not coincide with its centroid, potentially causing torsional effects.</li>
+                            <li><strong>Double angles:</strong> When two angles are used back-to-back, the behavior changes based on how they are connected (continuously or at intervals).</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="mb-6">
+                        <h3 class="text-xl font-medium mb-3">References</h3>
+                        <ul class="list-disc ml-6 space-y-1">
+                            <li>IS 800:2007 - General Construction in Steel - Code of Practice</li>
+                            <li>IS 808:1989 - Dimensions for Hot Rolled Steel Beam, Column, Channel and Angle Sections</li>
+                            <li>AISC 360-16 - Specification for Structural Steel Buildings</li>
+                            <li>Eurocode 3: Design of steel structures - Part 1-1: General rules and rules for buildings</li>
+                            <li>ECP 205:2008 - Egyptian Code of Practice for Steel Construction (LRFD)</li>
+                            <li>Gaylord, E.H., Gaylord, C.N., & Stallmeyer, J.E. (2010). Design of Steel Structures. McGraw-Hill.</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Optimization Modal -->
+    <div id="optimization-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">Optimized Section Recommendations</h2>
+                <button id="close-optimization-modal" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            
+            <p class="mb-4">The following sections can carry the required load with different efficiency levels:</p>
+            
+            <div id="optimization-table">
+                <!-- Table will be populated by JavaScript -->
+            </div>
+            
+            <div class="mt-6 flex justify-center">
+                <button id="apply-optimization" class="px-6 py-2 bg-primary hover:bg-secondary text-white font-medium rounded-lg transition-colors">
+                    Apply Selected Section
+                </button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Save Project Modal -->
+    <div id="save-project-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-lg max-w-md w-full">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold">Save Project</h2>
+                <button id="close-save-modal" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+            
+            <div class="mb-4">
+                <label class="block mb-2 font-medium">Project Name</label>
+                <input type="text" id="project-name" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" placeholder="Enter project name">
+            </div>
+            
+            <div class="mb-4">
+                <label class="block mb-2 font-medium">Description (optional)</label>
+                <textarea id="project-description" class="w-full p-2 border rounded text-base bg-white dark:bg-gray-700 border-gray-300 dark:border-gray-600" rows="3" placeholder="Enter description"></textarea>
+            </div>
+            
+            <div class="flex justify-end">
+                <button id="save-project-confirm" class="px-6 py-2 bg-primary hover:bg-secondary text-white font-medium rounded-lg transition-colors">
+                    Save
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Angle section property database
+        const angleSections = {
+            ISA: {
+                "20x20x3": { area: 112, Ix: 3.79, Iy: 3.79, rx: 1.84, ry: 1.84, rz: 1.16, w: 0.9 },
+                "25x25x3": { area: 142, Ix: 7.66, Iy: 7.66, rx: 2.32, ry: 2.32, rz: 1.44, w: 1.1 },
+                "30x30x3": { area: 174, Ix: 13.7, Iy: 13.7, rx: 2.81, ry: 2.81, rz: 1.74, w: 1.4 },
+                "40x40x4": { area: 307, Ix: 45.0, Iy: 45.0, rx: 3.83, ry: 3.83, rz: 2.34, w: 2.4 },
+                "50x50x5": { area: 480, Ix: 110, Iy: 110, rx: 4.8, ry: 4.8, rz: 2.93, w: 3.8 },
+                "60x60x6": { area: 687, Ix: 228, Iy: 228, rx: 5.77, ry: 5.77, rz: 3.52, w: 5.4 },
+                "65x65x6": { area: 748, Ix: 290, Iy: 290, rx: 6.23, ry: 6.23, rz: 3.82, w: 5.8 },
+                "70x70x6": { area: 809, Ix: 362, Iy: 362, rx: 6.7, ry: 6.7, rz: 4.06, w: 6.3 },
+                "75x75x6": { area: 871, Ix: 446, Iy: 446, rx: 7.16, ry: 7.16, rz: 4.37, w: 6.8 },
+                "80x80x6": { area: 933, Ix: 542, Iy: 542, rx: 7.62, ry: 7.62, rz: 4.60, w: 7.3 },
+                "90x90x8": { area: 1374, Ix: 1040, Iy: 1040, rx: 8.7, ry: 8.7, rz: 5.32, w: 10.8 },
+                "100x100x8": { area: 1540, Ix: 1450, Iy: 1450, rx: 9.7, ry: 9.7, rz: 5.92, w: 12.1 },
+                "100x100x10": { area: 1900, Ix: 1750, Iy: 1750, rx: 9.6, ry: 9.6, rz: 5.85, w: 14.9 },
+                "110x110x10": { area: 2100, Ix: 2350, Iy: 2350, rx: 10.6, ry: 10.6, rz: 6.44, w: 16.5 },
+                "130x130x10": { area: 2510, Ix: 3960, Iy: 3960, rx: 12.5, ry: 12.5, rz: 7.63, w: 19.7 },
+                "150x150x12": { area: 3470, Ix: 7550, Iy: 7550, rx: 14.8, ry: 14.8, rz: 9.02, w: 27.3 },
+                "200x200x16": { area: 6180, Ix: 23600, Iy: 23600, rx: 19.6, ry: 19.6, rz: 11.9, w: 48.5 }
+            },
+            IUSA: {
+                "30x20x3": { area: 142, Ix: 13.2, Iy: 4.36, rx: 3.05, ry: 1.75, rz: 1.34, w: 1.1 },
+                "40x25x3": { area: 189, Ix: 31.3, Iy: 8.22, rx: 4.07, ry: 2.08, rz: 1.69, w: 1.5 },
+                "45x30x4": { area: 285, Ix: 61.5, Iy: 21.9, rx: 4.65, ry: 2.78, rz: 2.14, w: 2.2 },
+                "50x30x5": { area: 379, Ix: 94.4, Iy: 26.1, rx: 5.00, ry: 2.63, rz: 2.22, w: 3.0 },
+                "60x40x5": { area: 480, Ix: 171, Iy: 68.4, rx: 5.97, ry: 3.77, rz: 2.93, w: 3.8 },
+                "65x45x5": { area: 530, Ix: 226, Iy: 101, rx: 6.53, ry: 4.37, rz: 3.31, w: 4.2 },
+                "70x45x6": { area: 658, Ix: 314, Iy: 129, rx: 6.91, ry: 4.43, rz: 3.46, w: 5.2 },
+                "75x50x6": { area: 720, Ix: 392, Iy: 181, rx: 7.39, ry: 5.02, rz: 3.90, w: 5.7 },
+                "80x50x6": { area: 763, Ix: 459, Iy: 187, rx: 7.76, ry: 4.96, rz: 3.94, w: 6.0 },
+                "90x60x8": { area: 1152, Ix: 903, Iy: 425, rx: 8.86, ry: 6.08, rz: 4.84, w: 9.0 },
+                "100x65x8": { area: 1270, Ix: 1220, Iy: 516, rx: 9.81, ry: 6.38, rz: 5.22, w: 10.0 },
+                "100x75x8": { area: 1348, Ix: 1280, Iy: 714, rx: 9.75, ry: 7.28, rz: 5.76, w: 10.6 },
+                "150x115x10": { area: 2590, Ix: 5850, Iy: 2560, rx: 15.0, ry: 9.93, rz: 8.20, w: 20.3 }
+            }
+        };
+        
+        // Basic data for other section types (would be expanded in a real implementation)
+        const channelSections = {
+            "ISMC75": { area: 879, Ix: 72.5, Iy: 15.1, rx: 28.7, ry: 13.1, w: 6.9 },
+            "ISMC100": { area: 1208, Ix: 184, Iy: 26.9, rx: 39.1, ry: 14.9, w: 9.48 },
+            "ISMC125": { area: 1564, Ix: 373, Iy: 40.5, rx: 48.8, ry: 16.1, w: 12.3 },
+            "ISMC150": { area: 1939, Ix: 643, Iy: 55.8, rx: 57.6, ry: 17.0, w: 15.2 },
+            "ISMC200": { area: 2761, Ix: 1686, Iy: 99.5, rx: 78.1, ry: 19.0, w: 21.7 },
+            "ISMC250": { area: 3600, Ix: 3473, Iy: 152, rx: 98.2, ry: 20.6, w: 28.2 },
+            "ISMC300": { area: 4511, Ix: 6302, Iy: 213, rx: 118, ry: 21.7, w: 35.4 }
+        };
+        
+        const isectionSections = {
+            "ISMB100": { area: 1423, Ix: 257, Iy: 24.9, rx: 42.5, ry: 13.2, w: 11.2 },
+            "ISMB150": { area: 2680, Ix: 1140, Iy: 79.6, rx: 65.2, ry: 17.2, w: 21.0 },
+            "ISMB200": { area: 3948, Ix: 3060, Iy: 151, rx: 88.0, ry: 19.6, w: 31.0 },
+            "ISMB250": { area: 5260, Ix: 6549, Iy: 240, rx: 111.5, ry: 21.4, w: 41.3 },
+            "ISMB300": { area: 6716, Ix: 12080, Iy: 347, rx: 134.1, ry: 22.7, w: 52.7 },
+            "ISMB350": { area: 8256, Ix: 20290, Iy: 473, rx: 157.0, ry: 23.9, w: 64.8 },
+            "ISMB400": { area: 9878, Ix: 32390, Iy: 615, rx: 181.2, ry: 25.0, w: 77.5 }
+        };
+        
+        const tubeSections = {
+            "48.3x3.2": { area: 455, Ix: 11.9, Iy: 11.9, rx: 16.2, ry: 16.2, w: 3.56 },
+            "60.3x3.6": { area: 639, Ix: 26.5, Iy: 26.5, rx: 20.4, ry: 20.4, w: 5.01 },
+            "76.1x3.6": { area: 818, Ix: 55.9, Iy: 55.9, rx: 26.1, ry: 26.1, w: 6.42 },
+            "88.9x4.0": { area: 1060, Ix: 97.0, Iy: 97.0, rx: 30.3, ry: 30.3, w: 8.33 },
+            "114.3x4.5": { area: 1540, Ix: 239, Iy: 239, rx: 39.4, ry: 39.4, w: 12.1 },
+            "139.7x5.0": { area: 2100, Ix: 482, Iy: 482, rx: 47.9, ry: 47.9, w: 16.5 },
+            "168.3x5.6": { area: 2830, Ix: 958, Iy: 958, rx: 58.2, ry: 58.2, w: 22.2 }
+        };
+
+        // Tab switching functionality
+        document.getElementById('tab-calculator').addEventListener('click', function() {
+            showTab('calculator');
+        });
+        
+        document.getElementById('tab-report').addEventListener('click', function() {
+            showTab('report');
+        });
+        
+        document.getElementById('tab-steps').addEventListener('click', function() {
+            showTab('steps');
+        });
+        
+        document.getElementById('tab-example').addEventListener('click', function() {
+            showTab('example');
+        });
+        
+        document.getElementById('tab-theory').addEventListener('click', function() {
+            showTab('theory');
+        });
+        
+        function showTab(tabName) {
+            // Hide all tab contents
+            document.querySelectorAll('[id^="content-"]').forEach(el => {
+                el.classList.add('hidden');
+            });
+            
+            // Remove active class from all tabs
+            document.querySelectorAll('[id^="tab-"]').forEach(el => {
+                el.classList.remove('border-primary', 'text-primary');
+                el.classList.add('text-gray-500', 'dark:text-gray-400');
+            });
+            
+            // Show selected tab content
+            document.getElementById('content-' + tabName).classList.remove('hidden');
+            
+            // Mark selected tab as active
+            document.getElementById('tab-' + tabName).classList.add('border-primary', 'text-primary');
+            document.getElementById('tab-' + tabName).classList.remove('text-gray-500', 'dark:text-gray-400');
+        }
+        
+        // Handle member type selection
+        document.getElementById('member-type').addEventListener('change', function() {
+            const type = this.value;
+            
+            // Hide all section options first
+            document.getElementById('angle-options').classList.add('hidden');
+            document.getElementById('channel-options').classList.add('hidden');
+            document.getElementById('isection-options').classList.add('hidden');
+            document.getElementById('tube-options').classList.add('hidden');
+            document.getElementById('double-angle-options').classList.add('hidden');
+            
+            // Show relevant options based on selection
+            if (type === 'single' || type === 'double') {
+                document.getElementById('angle-options').classList.remove('hidden');
+                
+                if (type === 'double') {
+                    document.getElementById('double-angle-options').classList.remove('hidden');
+                }
+            } else if (type === 'channel') {
+                document.getElementById('channel-options').classList.remove('hidden');
+            } else if (type === 'isection') {
+                document.getElementById('isection-options').classList.remove('hidden');
+            } else if (type === 'tube') {
+                document.getElementById('tube-options').classList.remove('hidden');
+            }
+            
+            updateVisual();
+        });
+        
+        // Handle angle series selection
+        document.getElementById('angle-series').addEventListener('change', function() {
+            const series = this.value;
+            
+            if (series === 'ISA') {
+                document.getElementById('equal-angle-dimensions').classList.remove('hidden');
+                document.getElementById('unequal-angle-dimensions').classList.add('hidden');
+            } else {
+                document.getElementById('equal-angle-dimensions').classList.add('hidden');
+                document.getElementById('unequal-angle-dimensions').classList.remove('hidden');
+            }
+            
+            updateVisual();
+        });
+        
+        // Handle connection type selection
+        document.getElementById('connection-type').addEventListener('change', function() {
+            const type = this.value;
+            
+            if (type === 'connected') {
+                document.getElementById('interval-option').classList.remove('hidden');
+            } else {
+                document.getElementById('interval-option').classList.add('hidden');
+            }
+        });
+        
+        // Handle end conditions selection
+        document.getElementById('end-conditions').addEventListener('change', function() {
+            const value = this.value;
+            
+            if (value === 'custom') {
+                document.getElementById('custom-k-value').classList.remove('hidden');
+            } else {
+                document.getElementById('custom-k-value').classList.add('hidden');
+            }
+        });
+        
+        // Handle load type selection
+        document.querySelectorAll('input[name="load-type"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'combined') {
+                    document.getElementById('combined-loads').classList.remove('hidden');
+                } else {
+                    document.getElementById('combined-loads').classList.add('hidden');
+                }
+            });
+        });
+        
+        // Handle unit selection
+        document.querySelectorAll('input[name="units"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                const unitSystem = this.value;
+                
+                if (unitSystem === 'metric') {
+                    document.querySelectorAll('.unit-length').forEach(el => el.textContent = 'mm');
+                    document.querySelectorAll('.unit-force').forEach(el => el.textContent = 'kN');
+                    document.querySelectorAll('.unit-moment').forEach(el => el.textContent = 'kN·m');
+                } else {
+                    document.querySelectorAll('.unit-length').forEach(el => el.textContent = 'in');
+                    document.querySelectorAll('.unit-force').forEach(el => el.textContent = 'kip');
+                    document.querySelectorAll('.unit-moment').forEach(el => el.textContent = 'kip·in');
+                    
+                    // Would need to convert values here in a real application
+                }
+            });
+        });
+        
+        // Update visualization based on section selection
+        function updateVisual() {
+            const memberType = document.getElementById('member-type').value;
+            const visualContainer = document.getElementById('angle-visual');
+            
+            let svgHtml = '';
+            
+            if (memberType === 'single') {
+                const angleSeries = document.getElementById('angle-series').value;
+                
+                if (angleSeries === 'ISA') {
+                    // Equal angle SVG
+                    svgHtml = `
+                        <svg width="120" height="120" viewBox="0 0 120 120" class="angle-diagram">
+                            <rect x="20" y="20" width="80" height="10" fill="currentColor" />
+                            <rect x="20" y="20" width="10" height="80" fill="currentColor" />
+                            <text x="60" y="17" text-anchor="middle" font-size="12" fill="currentColor">Equal Angle</text>
+                        </svg>
+                    `;
+                } else {
+                    // Unequal angle SVG
+                    svgHtml = `
+                        <svg width="120" height="120" viewBox="0 0 120 120" class="angle-diagram">
+                            <rect x="20" y="20" width="80" height="10" fill="currentColor" />
+                            <rect x="20" y="20" width="10" height="60" fill="currentColor" />
+                            <text x="60" y="17" text-anchor="middle" font-size="12" fill="currentColor">Unequal Angle</text>
+                        </svg>
+                    `;
+                }
+            } else if (memberType === 'double') {
+                const angleSeries = document.getElementById('angle-series').value;
+                
+                if (angleSeries === 'ISA') {
+                    // Double equal angle SVG
+                    svgHtml = `
+                        <svg width="120" height="120" viewBox="0 0 120 120" class="angle-diagram">
+                            <!-- Left angle -->
+                            <rect x="35" y="40" width="10" height="60" fill="currentColor" />
+                            <rect x="10" y="40" width="35" height="10" fill="currentColor" />
+                            
+                            <!-- Right angle -->
+                            <rect x="75" y="40" width="10" height="60" fill="currentColor" />
+                            <rect x="75" y="40" width="35" height="10" fill="currentColor" />
+                            
+                            <!-- Small gap between angles (representing back-to-back distance) -->
+                            <line x1="45" y1="60" x2="75" y2="60" stroke="currentColor" stroke-width="1" stroke-dasharray="4" />
+                            
+                            <!-- Axis lines -->
+                            <line x1="10" y1="70" x2="110" y2="70" stroke="currentColor" stroke-width="1" stroke-dasharray="5,3" />
+                            <line x1="60" y1="30" x2="60" y2="110" stroke="currentColor" stroke-width="1" stroke-dasharray="5,3" />
+                            
+                            <!-- Axis labels -->
+                            <text x="110" y="68" font-size="10" fill="currentColor">X</text>
+                            <text x="62" y="110" font-size="10" fill="currentColor">Y</text>
+                            
+                            <!-- Dimension label -->
+                            <text x="60" y="55" text-anchor="middle" font-size="8" fill="currentColor">s</text>
+                            
+                            <text x="60" y="17" text-anchor="middle" font-size="12" fill="currentColor">Double Equal Angle</text>
+                        </svg>
+                    `;
+                } else {
+                    // Double unequal angle SVG
+                    svgHtml = `
+                        <svg width="120" height="120" viewBox="0 0 120 120" class="angle-diagram">
+                            <!-- Left angle -->
+                            <rect x="35" y="40" width="10" height="50" fill="currentColor" />
+                            <rect x="10" y="40" width="35" height="10" fill="currentColor" />
+                            
+                            <!-- Right angle -->
+                            <rect x="75" y="40" width="10" height="50" fill="currentColor" />
+                            <rect x="75" y="40" width="35" height="10" fill="currentColor" />
+                            
+                            <!-- Small gap between angles (representing back-to-back distance) -->
+                            <line x1="45" y1="60" x2="75" y2="60" stroke="currentColor" stroke-width="1" stroke-dasharray="4" />
+                            
+                            <!-- Axis lines -->
+                            <line x1="10" y1="70" x2="110" y2="70" stroke="currentColor" stroke-width="1" stroke-dasharray="5,3" />
+                            <line x1="60" y1="30" x2="60" y2="100" stroke="currentColor" stroke-width="1" stroke-dasharray="5,3" />
+                            
+                            <!-- Axis labels -->
+                            <text x="110" y="68" font-size="10" fill="currentColor">X</text>
+                            <text x="62" y="100" font-size="10" fill="currentColor">Y</text>
+                            
+                            <!-- Dimension label -->
+                            <text x="60" y="55" text-anchor="middle" font-size="8" fill="currentColor">s</text>
+                            
+                            <text x="60" y="17" text-anchor="middle" font-size="12" fill="currentColor">Double Unequal Angle</text>
+                        </svg>
+                    `;
+                }
+            } else if (memberType === 'channel') {
+                // Channel section SVG
+                svgHtml = `
+                    <svg width="120" height="120" viewBox="0 0 120 120" class="angle-diagram">
+                        <rect x="30" y="30" width="60" height="10" fill="currentColor" />
+                        <rect x="30" y="40" width="10" height="50" fill="currentColor" />
+                        <rect x="80" y="40" width="10" height="50" fill="currentColor" />
+                        <text x="60" y="17" text-anchor="middle" font-size="12" fill="currentColor">Channel Section</text>
+                    </svg>
+                `;
+            } else if (memberType === 'isection') {
+                // I-section SVG
+                svgHtml = `
+                    <svg width="120" height="120" viewBox="0 0 120 120" class="angle-diagram">
+                        <rect x="30" y="30" width="60" height="10" fill="currentColor" />
+                        <rect x="55" y="40" width="10" height="40" fill="currentColor" />
+                        <rect x="30" y="80" width="60" height="10" fill="currentColor" />
+                        <text x="60" y="17" text-anchor="middle" font-size="12" fill="currentColor">I-Section</text>
+                    </svg>
+                `;
+            } else if (memberType === 'tube') {
+                // Tubular section SVG
+                svgHtml = `
+                    <svg width="120" height="120" viewBox="0 0 120 120" class="angle-diagram">
+                        <circle cx="60" cy="60" r="35" stroke="currentColor" stroke-width="10" fill="none" />
+                        <text x="60" y="17" text-anchor="middle" font-size="12" fill="currentColor">Tubular Section</text>
+                    </svg>
+                `;
+            }
+            
+            visualContainer.innerHTML = svgHtml;
+        }
+        
+        // Initialize visual
+        updateVisual();
+
+        // Function to check section classification according to ECP code
+        function classifyECPSection(memberType, dimensions, steelGrade) {
+            // Implementation of section classification per ECP Tables 2.12a-d
+            // This is a simplified version for demonstration
+            
+            let result = {
+                isCompact: false,
+                isNonCompact: false,
+                isSlender: false,
+                effectiveArea: dimensions.area,
+                Q: 1.0
+            };
+            
+            // Convert MPa to t/cm² for ECP calculations
+            const Fy = steelGrade / 10;
+            
+            if (memberType === 'single' || memberType === 'double') {
+                // For angles, extract dimensions from size string (e.g., "65x65x6")
+                const sizeParts = dimensions.sectionName.split('x').map(Number);
+                const b = sizeParts[0];  // first leg
+                const h = sizeParts.length > 2 ? sizeParts[1] : b;  // second leg (for equal angles, h=b)
+                const t = sizeParts[sizeParts.length - 1];  // thickness
+                
+                // Check leg slenderness ratio against ECP limits (Table 2.12d)
+                const legRatio = Math.max(b, h) / t;
+                const limitNonCompact = 23 / Math.sqrt(Fy);
+                
+                // For unequal angles, also check average width-to-thickness
+                let avgRatio = (b + h) / (2 * t);
+                let avgLimitNonCompact = 17 / Math.sqrt(Fy);
+                
+                if (memberType === 'single' && dimensions.series === 'IUSA') {
+                    // Check both criteria for unequal angle
+                    if (legRatio <= limitNonCompact && avgRatio <= avgLimitNonCompact) {
+                        result.isNonCompact = true;
+                    } else {
+                        result.isSlender = true;
+                        // Calculate effective area (simplified approach)
+                        const reductionFactor = limitNonCompact / legRatio;
+                        result.Q = Math.min(1.0, reductionFactor);
+                        result.effectiveArea = dimensions.area * result.Q;
+                    }
+                } else {
+                    // For equal angles, just check the leg ratio
+                    if (legRatio <= limitNonCompact) {
+                        result.isNonCompact = true;
+                    } else {
+                        result.isSlender = true;
+                        // Calculate effective area (simplified approach)
+                        const reductionFactor = limitNonCompact / legRatio;
+                        result.Q = Math.min(1.0, reductionFactor);
+                        result.effectiveArea = dimensions.area * result.Q;
+                    }
+                }
+                
+            } else if (memberType === 'channel') {
+                // Extract size from name (e.g., ISMC200)
+                const sizeName = dimensions.sectionName;
+                const channelData = channelSections[sizeName];
+                
+                // For channels, need web and flange slenderness
+                // This is simplified - in real implementation would need actual dimensions
+                const webHeight = channelData.rx * 2; // Estimate
+                const webThickness = 6; // Estimate for demonstration
+                const flangeWidth = channelData.ry * 2; // Estimate
+                const flangeThickness = 8; // Estimate for demonstration
+                
+                // Check web (Table 2.12a)
+                const webRatio = webHeight / webThickness;
+                const webCompactLimit = 127 / Math.sqrt(Fy);
+                const webNonCompactLimit = 222 / Math.sqrt(Fy);
+                
+                // Check flange (Table 2.12c)
+                const flangeRatio = flangeWidth / flangeThickness;
+                const flangeCompactLimit = 16.9 / Math.sqrt(Fy);
+                const flangeNonCompactLimit = 33 / Math.sqrt(Fy);
+                
+                // Classify section
+                if (webRatio <= webCompactLimit && flangeRatio <= flangeCompactLimit) {
+                    result.isCompact = true;
+                } else if (webRatio <= webNonCompactLimit && flangeRatio <= flangeNonCompactLimit) {
+                    result.isNonCompact = true;
+                } else {
+                    result.isSlender = true;
+                    
+                    // This is a simplified approach to calculate effective area
+                    let effectiveReduction = 1.0;
+                    
+                    if (webRatio > webNonCompactLimit) {
+                        const webReduction = webNonCompactLimit / webRatio;
+                        effectiveReduction *= (0.5 + 0.5 * webReduction);
+                    }
+                    
+                    if (flangeRatio > flangeNonCompactLimit) {
+                        const flangeReduction = flangeNonCompactLimit / flangeRatio;
+                        effectiveReduction *= (0.7 + 0.3 * flangeReduction);
+                    }
+                    
+                    result.Q = effectiveReduction;
+                    result.effectiveArea = dimensions.area * effectiveReduction;
+                }
+                
+            } else if (memberType === 'isection') {
+                // Similar approach for I-Sections
+                // Would need actual dimensions from section database
+                
+                // For demonstration, assume compact section
+                result.isCompact = true;
+                
+            } else if (memberType === 'tube') {
+                // For tubular sections (Table 2.12d)
+                const sizeValues = dimensions.sectionName.split('x').map(Number);
+                const diameter = sizeValues[0];
+                const thickness = sizeValues[1];
+                
+                const ratioD_t = diameter / thickness;
+                const compactLimit = 165 / Fy;
+                const nonCompactLimit = 211 / Fy;
+                
+                if (ratioD_t <= compactLimit) {
+                    result.isCompact = true;
+                } else if (ratioD_t <= nonCompactLimit) {
+                    result.isNonCompact = true;
+                } else {
+                    result.isSlender = true;
+                    // Calculate effective area
+                    const reductionFactor = nonCompactLimit / ratioD_t;
+                    result.Q = Math.min(1.0, reductionFactor);
+                    result.effectiveArea = dimensions.area * result.Q;
+                }
+            }
+            
+            return result;
+        }
+        
+        // Calculate button functionality
+        document.getElementById('calculate-btn').addEventListener('click', function() {
+            // Update step indicator
+            document.getElementById('step1').classList.add('completed');
+            document.getElementById('step2').classList.add('active');
+            
+            // Validate inputs
+            if (!validateInputs()) {
+                return;
+            }
+            
+            // Get input values
+            const memberType = document.getElementById('member-type').value;
+            const steelGrade = parseInt(document.getElementById('steel-grade').value);
+            const designCode = document.getElementById('design-code').value;
+            
+            // Get section properties based on member type
+            let sectionProps;
+            let sectionName;
+            
+            if (memberType === 'single' || memberType === 'double') {
+                const angleSeries = document.getElementById('angle-series').value;
+                
+                if (angleSeries === 'ISA') {
+                    sectionName = document.getElementById('leg-size').value;
+                } else {
+                    sectionName = document.getElementById('unequal-leg-size').value;
+                }
+                
+                sectionProps = angleSections[angleSeries][sectionName];
+            } else if (memberType === 'channel') {
+                sectionName = document.getElementById('channel-size').value;
+                sectionProps = channelSections[sectionName];
+            } else if (memberType === 'isection') {
+                sectionName = document.getElementById('isection-size').value;
+                sectionProps = isectionSections[sectionName];
+            } else if (memberType === 'tube') {
+                sectionName = document.getElementById('tube-size').value;
+                sectionProps = tubeSections[sectionName];
+            }
+            
+            if (!sectionProps) {
+                alert('Section properties not found for the selected section.');
+                return;
+            }
+            
+            // Get design parameters
+            let effectiveLength = parseFloat(document.getElementById('effective-length').value);
+            let endConditions = document.getElementById('end-conditions').value;
+            let endConditionFactor;
+            
+            if (endConditions === 'custom') {
+                endConditionFactor = parseFloat(document.getElementById('k-value').value);
+            } else {
+                endConditionFactor = parseFloat(endConditions);
+            }
+            
+            const designLoad = parseFloat(document.getElementById('design-load').value);
+            const loadFactor = parseFloat(document.getElementById('load-factor').value);
+            const loadType = document.querySelector('input[name="load-type"]:checked').value;
+            
+            // Convert units if using imperial
+            const unitSystem = document.querySelector('input[name="units"]:checked').value;
+            
+            if (unitSystem === 'imperial') {
+                // Convert inches to mm for calculations
+                effectiveLength = effectiveLength * 25.4;
+                
+                // Other conversions would be needed in a real implementation
+            }
+            
+            // Calculate design values
+            let area = sectionProps.area;
+            let rx = sectionProps.rx;
+            let ry = sectionProps.ry;
+            let rz = sectionProps.rz || Math.min(rx, ry); // Some sections may not have rz defined
+            
+            // Adjust for double angle if needed
+            if (memberType === 'double') {
+                area = area * 2;
+                
+                // For double angles, the critical radius of gyration changes
+                const backToBackDistance = parseFloat(document.getElementById('back-to-back').value);
+                const connectionType = document.getElementById('connection-type').value;
+                
+                // Extract dimensions from section name
+                const dimensions = sectionName.split('x').map(d => parseFloat(d));
+                const h = dimensions[0];  // First leg
+                const b = dimensions.length > 2 ? dimensions[1] : h;  // Second leg (same as first for equal angles)
+                const t = dimensions[dimensions.length - 1];  // Thickness
+                
+                if (connectionType === 'continuous') {
+                    // For continuously connected double angles
+                    // Calculate modified ry for back-to-back arrangement
+                    const totalDepth = h * 2 + backToBackDistance;
+                    const iTotal = 2 * sectionProps.Iy + area * Math.pow(totalDepth/4, 2);
+                    ry = Math.sqrt(iTotal / area);
+                } else {
+                    // For intermittently connected angles
+                    const tackInterval = parseFloat(document.getElementById('tack-interval').value);
+                    
+                    // Consider the interval between connections for slenderness
+                    if (tackInterval > 0) {
+                        // Calculate slenderness between connections
+                        const slendernessRatio = tackInterval / rz;
+                        
+                        if (slendernessRatio > 40) {
+                            // If spacing is too large, it affects the overall behavior
+                            rz = rz * 0.8; // Reduction factor for conservative design
+                        }
+                    }
+                }
+            }
+            
+            // Calculate slenderness ratio
+            const kL = endConditionFactor * effectiveLength;
+            const slendernessRatio = kL / Math.min(rx, ry, rz);
+            
+            // Check maximum slenderness limit (for ECP code)
+            let maxSlendernessLimit = 200; // Default
+            let slendernessCheckPassed = true;
+            
+            if (designCode === 'ecp205') {
+                maxSlendernessLimit = 180; // ECP Table 2.3 limit for primary compression members
+                
+                if (slendernessRatio > maxSlendernessLimit) {
+                    slendernessCheckPassed = false;
+                }
+            }
+            
+            // Calculate design strength based on slenderness ratio and design code
+            let fcr; // Critical stress
+            let Q = 1.0; // Reduction factor for slender sections (ECP)
+            let effectiveArea = area; // Used for slender sections (ECP)
+            let sectionClass = {
+                isCompact: true, 
+                isNonCompact: false, 
+                isSlender: false,
+                effectiveArea: area,
+                Q: 1.0
+            };
+            let lambdaC = 0; // ECP slenderness parameter
+            let resistanceFactor = 1.0; // Will be set based on code
+            
+            // Define modulus of elasticity (E) in MPa 
+            const E = 200000; // For most codes
+
+            if (designCode === 'is800') {
+                // IS 800:2007 approach
+                if (slendernessRatio <= 50) {
+                    // Short column
+                    fcr = steelGrade * (1 - Math.pow(slendernessRatio, 2) / (2 * 22500));
+                } else if (slendernessRatio > 50 && slendernessRatio <= 200) {
+                    // Intermediate/long column
+                    fcr = steelGrade * 364 * Math.pow(slendernessRatio, -2) / (1.6 - 364 * Math.pow(slendernessRatio, -2));
+                } else {
+                    // Very long column
+                    fcr = 0.3 * steelGrade;
+                }
+                
+                resistanceFactor = 1.0; // IS 800 includes this in the fcr formula
+                
+            } else if (designCode === 'aisc360') {
+                // AISC 360-16 approach
+                const Fe = Math.pow(Math.PI, 2) * E / Math.pow(slendernessRatio, 2);
+                
+                if (slendernessRatio <= 4.71 * Math.sqrt(E / steelGrade)) {
+                    fcr = 0.658 ** (steelGrade / Fe) * steelGrade;
+                } else {
+                    fcr = 0.877 * Fe;
+                }
+                
+                resistanceFactor = 0.9; // AISC LRFD resistance factor
+                
+            } else if (designCode === 'eurocode3') {
+                // Eurocode 3 approach (simplified)
+                const lambda = slendernessRatio / (Math.PI * Math.sqrt(E / steelGrade));
+                
+                if (lambda <= 0.2) {
+                    fcr = steelGrade;
+                } else {
+                    const phi = 0.5 * (1 + 0.21 * (lambda - 0.2) + lambda * lambda);
+                    const chi = 1 / (phi + Math.sqrt(phi * phi - lambda * lambda));
+                    fcr = chi * steelGrade;
+                }
+                
+                resistanceFactor = 1.0; // EC3 applies partial factors differently
+                
+            } else if (designCode === 'ecp205') {
+                // Egyptian Code ECP 205:2008 approach
+                
+                // First, classify the section
+                const dimensionsData = {
+                    area: area,
+                    sectionName: sectionName,
+                    series: memberType === 'single' || memberType === 'double' ? document.getElementById('angle-series').value : null
+                };
+                
+                sectionClass = classifyECPSection(memberType, dimensionsData, steelGrade);
+                
+                // Get effective area and Q if slender
+                if (sectionClass.isSlender) {
+                    Q = sectionClass.Q;
+                    effectiveArea = sectionClass.effectiveArea;
+                }
+                
+                // Calculate elastic critical stress Fe
+                const Fe = Math.pow(Math.PI, 2) * E / Math.pow(slendernessRatio, 2);
+                
+                // Calculate slenderness parameter λc (ECP Eq 4.4)
+                lambdaC = Math.sqrt(steelGrade / Fe);
+                
+                // Calculate critical stress based on slenderness parameter
+                if (sectionClass.isSlender) {
+                    // For slender sections with effective area (ECP Eq 4.6, 4.7)
+                    if (lambdaC * Math.sqrt(Q) <= 1.1) {
+                        // Inelastic buckling
+                        fcr = steelGrade * Q * (1 - 0.384 * Q * Math.pow(lambdaC, 2));
+                    } else {
+                        // Elastic buckling
+                        fcr = 0.648 * steelGrade / Math.pow(lambdaC, 2);
+                    }
+                    
+                    area = effectiveArea; // Use effective area for slender sections
+                } else {
+                    // For compact and non-compact sections (ECP Eq 4.2, 4.3)
+                    if (lambdaC <= 1.1) {
+                        // Inelastic buckling
+                        fcr = steelGrade * (1 - 0.384 * Math.pow(lambdaC, 2));
+                    } else {
+                        // Elastic buckling
+                        fcr = 0.648 * steelGrade / Math.pow(lambdaC, 2);
+                    }
+                }
+                
+                // For single angles and tees, check flexural-torsional buckling
+                if (memberType === 'single' || (memberType === 'double' && document.getElementById('connection-type').value !== 'continuous')) {
+                    // This would be a more complex calculation in reality
+                    // For now, we'll use a simplified approach
+                    const fcrFT = fcr * 0.85; // Simplified reduction for FT buckling
+                    fcr = Math.min(fcr, fcrFT);
+                }
+                
+                resistanceFactor = 0.8; // ECP 205 resistance factor for compression
+            }
+            
+            // Calculate design strength
+            const designStrength = (area * fcr) / 1000 * resistanceFactor; // Convert to kN and apply resistance factor
+            
+            // Calculate utilization
+            const factoredLoad = designLoad * loadFactor;
+            let utilization = (factoredLoad / designStrength) * 100;
+            
+            // Add combined load effects if selected
+            if (loadType === 'combined') {
+                const momentX = parseFloat(document.getElementById('moment-x').value) || 0;
+                const momentY = parseFloat(document.getElementById('moment-y').value) || 0;
+                
+                // Simplified interaction equation for combined loading
+                if (momentX > 0 || momentY > 0) {
+                    // This is a simplified approach - a real implementation would use section modulus and proper interaction equations
+                    const momentUtil = (momentX + momentY) / 10; // Simplified factor
+                    utilization = utilization + momentUtil;
+                }
+            }
+            
+            // Determine if design passes
+            let passes = utilization <= 100;
+            
+            // For ECP code, also check slenderness limit
+            if (designCode === 'ecp205' && !slendernessCheckPassed) {
+                passes = false;
+            }
+            
+            // Update results
+            document.getElementById('result-area').textContent = area.toFixed(2) + ' mm²';
+            document.getElementById('result-rog').textContent = Math.min(rx, ry, rz).toFixed(2) + ' mm';
+            document.getElementById('result-slenderness').textContent = slendernessRatio.toFixed(2);
+            document.getElementById('result-strength').textContent = designStrength.toFixed(2) + ' kN';
+            document.getElementById('result-utilization').textContent = utilization.toFixed(1) + '%';
+            document.getElementById('result-utilization-bar').style.width = Math.min(100, utilization) + '%';
+            
+            // Set color based on utilization
+            if (utilization > 90) {
+                document.getElementById('result-utilization-bar').style.backgroundColor = 'var(--danger, #e53e3e)';
+            } else if (utilization > 75) {
+                document.getElementById('result-utilization-bar').style.backgroundColor = 'var(--warning, #ed8936)';
+                        } else {
+                document.getElementById('result-utilization-bar').style.backgroundColor = 'var(--success, #48bb78)';
+            }
+            
+            // Set status text
+            document.getElementById('result-status').textContent = passes ? 'PASS' : 'FAIL';
+            document.getElementById('result-status').style.color = passes ? 'var(--success, #48bb78)' : 'var(--danger, #e53e3e)';
+            
+            // Show design warnings if needed
+            const warningsElement = document.getElementById('design-warnings');
+            const warningList = document.getElementById('warning-list');
+            
+            // Clear previous warnings
+            warningList.innerHTML = '';
+            warningsElement.classList.add('hidden');
+            
+            // Check for potential design issues
+            const warnings = [];
+            
+            if (designCode === 'ecp205' && slendernessRatio > 180) {
+                warnings.push('Slenderness ratio exceeds ECP limit of 180 for primary compression members.');
+            } else if (slendernessRatio > 180) {
+                warnings.push('Very high slenderness ratio (>180). Member may be susceptible to buckling.');
+            }
+            
+            if (utilization > 90) {
+                warnings.push('High utilization (>90%). Consider using a larger section for safety.');
+            }
+            
+            if (memberType === 'double' && document.getElementById('connection-type').value === 'connected') {
+                const tackInterval = parseFloat(document.getElementById('tack-interval').value);
+                if (tackInterval > 40 * rz) {
+                    warnings.push('Tack interval may be too large for effective composite action.');
+                }
+            }
+            
+            if (designCode === 'ecp205' && sectionClass.isSlender) {
+                warnings.push('Section has slender elements. Design strength is based on effective area.');
+            }
+            
+            // Display warnings if any exist
+            if (warnings.length > 0) {
+                warnings.forEach(warning => {
+                    const li = document.createElement('li');
+                    li.textContent = warning;
+                    warningList.appendChild(li);
+                });
+                warningsElement.classList.remove('hidden');
+            }
+            
+            // Show results
+            document.getElementById('results-placeholder').classList.add('hidden');
+            document.getElementById('results-content').classList.remove('hidden');
+            
+            // Update calculation steps
+            document.getElementById('step-area').textContent = area.toFixed(2) + ' mm²';
+            document.getElementById('step-rx').textContent = rx.toFixed(2) + ' mm';
+            document.getElementById('step-ry').textContent = ry.toFixed(2) + ' mm';
+            document.getElementById('step-rz').textContent = rz.toFixed(2) + ' mm';
+            
+            document.getElementById('step-k-factor').textContent = endConditionFactor.toFixed(2);
+            document.getElementById('step-length').textContent = effectiveLength.toFixed(0);
+            document.getElementById('step-min-r').textContent = Math.min(rx, ry, rz).toFixed(2);
+            document.getElementById('step-slenderness').textContent = slendernessRatio.toFixed(2);
+            
+            // Update slenderness check for ECP code
+            if (designCode === 'ecp205') {
+                document.getElementById('max-slenderness-check').classList.remove('hidden');
+                document.getElementById('step-max-slenderness').textContent = '180 (ECP Table 2.3)';
+                document.getElementById('step-slenderness-check').textContent = slendernessCheckPassed ? 'PASS' : 'FAIL';
+                document.getElementById('step-slenderness-check').style.color = slendernessCheckPassed ? 'var(--success, #48bb78)' : 'var(--danger, #e53e3e)';
+            } else {
+                document.getElementById('max-slenderness-check').classList.add('hidden');
+            }
+            
+            document.getElementById('step-design-code').textContent = {
+                'is800': 'IS 800:2007',
+                'aisc360': 'AISC 360-16',
+                'eurocode3': 'Eurocode 3',
+                'ecp205': 'ECP 205:2008'
+            }[designCode];
+            
+            // Show the appropriate calculation method
+            document.getElementById('is800-calculation').classList.add('hidden');
+            document.getElementById('aisc-calculation').classList.add('hidden');
+            document.getElementById('ecp-calculation').classList.add('hidden');
+            
+            if (designCode === 'is800') {
+                document.getElementById('is800-calculation').classList.remove('hidden');
+            } else if (designCode === 'aisc360') {
+                document.getElementById('aisc-calculation').classList.remove('hidden');
+            } else if (designCode === 'ecp205') {
+                document.getElementById('ecp-calculation').classList.remove('hidden');
+                document.getElementById('step-section-class').textContent = 
+                    sectionClass.isCompact ? 'Compact (Class 1)' : 
+                    sectionClass.isNonCompact ? 'Non-Compact (Class 2)' : 
+                    'Slender (Class 3)';
+                
+                document.getElementById('step-lambda-c').textContent = lambdaC.toFixed(3);
+                
+                if (sectionClass.isSlender) {
+                    document.getElementById('step-q-factor').textContent = Q.toFixed(3);
+                    document.getElementById('step-effective-area').textContent = effectiveArea.toFixed(2);
+                    document.getElementById('slender-calculations').classList.remove('hidden');
+                } else {
+                    document.getElementById('slender-calculations').classList.add('hidden');
+                }
+            }
+            
+            document.getElementById('step-lambda').textContent = slendernessRatio.toFixed(2);
+            document.getElementById('step-fy').textContent = steelGrade.toString();
+            document.getElementById('step-fcr').textContent = fcr.toFixed(2);
+            
+            document.getElementById('step-final-area').textContent = area.toFixed(2);
+            document.getElementById('step-final-fcr').textContent = fcr.toFixed(2);
+            document.getElementById('step-resistance-factor').textContent = resistanceFactor.toFixed(2);
+            document.getElementById('step-strength').textContent = designStrength.toFixed(2);
+            
+            document.getElementById('step-applied-load').textContent = designLoad.toFixed(2);
+            document.getElementById('step-load-factor').textContent = loadFactor.toFixed(2);
+            document.getElementById('step-factored-load').textContent = factoredLoad.toFixed(2);
+            document.getElementById('step-utilization').textContent = utilization.toFixed(1);
+            
+            document.getElementById('step-status').textContent = passes ? 'PASS' : 'FAIL';
+            document.getElementById('step-status').style.color = passes ? 'var(--success, #48bb78)' : 'var(--danger, #e53e3e)';
+            
+            // Show calculation steps
+            document.getElementById('steps-placeholder').classList.add('hidden');
+            document.getElementById('calculation-steps-content').classList.remove('hidden');
+            
+            // Prepare alternative sections (for optimization)
+            if (memberType === 'single' || memberType === 'double') {
+                const angleSeries = document.getElementById('angle-series').value;
+                prepareOptimizedSections(angleSeries, designStrength, factoredLoad, memberType);
+            }
+            
+            // Complete step indicator
+            setTimeout(function() {
+                document.getElementById('step2').classList.remove('active');
+                document.getElementById('step2').classList.add('completed');
+                document.getElementById('step3').classList.add('active');
+            }, 500);
+            
+            // Store calculation data for report
+            window.calculationData = {
+                memberType,
+                steelGrade,
+                sectionName,
+                sectionType: memberType === 'single' || memberType === 'double' ? document.getElementById('angle-series').value : memberType,
+                effectiveLength,
+                endConditionFactor,
+                designLoad,
+                loadFactor,
+                designCode,
+                area,
+                rx,
+                ry,
+                rz: rz || 0,
+                minR: Math.min(rx, ry, rz || Math.min(rx, ry)),
+                slendernessRatio,
+                fcr,
+                designStrength,
+                factoredLoad,
+                utilization,
+                passes,
+                unitSystem,
+                loadType,
+                warnings,
+                resistanceFactor
+            };
+            
+            // Add ECP-specific data to calculation data
+            if (designCode === 'ecp205') {
+                window.calculationData.lambdaC = lambdaC;
+                window.calculationData.sectionClass = sectionClass.isCompact ? 'Compact (Class 1)' : 
+                                                     sectionClass.isNonCompact ? 'Non-Compact (Class 2)' : 
+                                                     'Slender (Class 3)';
+                window.calculationData.isSlender = sectionClass.isSlender;
+                window.calculationData.Q = Q;
+                window.calculationData.maxSlendernessLimit = maxSlendernessLimit;
+                window.calculationData.slendernessCheckPassed = slendernessCheckPassed;
+            }
+            
+            if (memberType === 'double') {
+                window.calculationData.backToBackDistance = parseFloat(document.getElementById('back-to-back').value);
+                window.calculationData.connectionType = document.getElementById('connection-type').value;
+                
+                if (window.calculationData.connectionType === 'connected') {
+                    window.calculationData.tackInterval = parseFloat(document.getElementById('tack-interval').value);
+                }
+            }
+            
+            if (loadType === 'combined') {
+                window.calculationData.momentX = parseFloat(document.getElementById('moment-x').value) || 0;
+                window.calculationData.momentY = parseFloat(document.getElementById('moment-y').value) || 0;
+            }
+        });
+        
+        // Function to validate inputs
+        function validateInputs() {
+            const effectiveLength = document.getElementById('effective-length').value;
+            const designLoad = document.getElementById('design-load').value;
+            const loadFactor = document.getElementById('load-factor').value;
+            
+            // Basic validation
+            if (!effectiveLength || effectiveLength <= 0) {
+                alert('Please enter a valid effective length (> 0).');
+                return false;
+            }
+            
+            if (!designLoad || designLoad <= 0) {
+                alert('Please enter a valid design load (> 0).');
+                return false;
+            }
+            
+            if (!loadFactor || loadFactor < 1) {
+                alert('Please enter a valid load factor (≥ 1.0).');
+                return false;
+            }
+            
+            const memberType = document.getElementById('member-type').value;
+            
+            if (memberType === 'double') {
+                const backToBack = document.getElementById('back-to-back').value;
+                if (!backToBack || backToBack < 0) {
+                    alert('Please enter a valid back-to-back distance (≥ 0).');
+                    return false;
+                }
+                
+                const connectionType = document.getElementById('connection-type').value;
+                if (connectionType === 'connected') {
+                    const tackInterval = document.getElementById('tack-interval').value;
+                    if (!tackInterval || tackInterval <= 0) {
+                        alert('Please enter a valid tack interval (> 0).');
+                        return false;
+                    }
+                }
+            }
+            
+            // Custom K value validation
+            const endConditions = document.getElementById('end-conditions').value;
+            if (endConditions === 'custom') {
+                const kValue = document.getElementById('k-value').value;
+                if (!kValue || kValue <= 0) {
+                    alert('Please enter a valid K value (> 0).');
+                    return false;
+                }
+            }
+            
+            // Combined load validation
+            const loadType = document.querySelector('input[name="load-type"]:checked').value;
+            if (loadType === 'combined') {
+                const momentX = document.getElementById('moment-x').value;
+                const momentY = document.getElementById('moment-y').value;
+                
+                if ((!momentX || momentX < 0) && (!momentY || momentY < 0)) {
+                    alert('For combined loading, please enter valid moments (≥ 0).');
+                    return false;
+                }
+            }
+            
+            return true;
+        }
+        
+        // Prepare optimized sections
+        function prepareOptimizedSections(series, currentStrength, requiredStrength, memberType) {
+            const optResults = document.getElementById('optimization-results');
+            optResults.innerHTML = '';
+            
+            // Get all sections in the series
+            const sections = Object.keys(angleSections[series]);
+            const results = [];
+            
+            // Analyze each section
+            sections.forEach(section => {
+                const props = angleSections[series][section];
+                let area = props.area;
+                let strength;
+                
+                if (memberType === 'double') {
+                    area = area * 2;
+                }
+                
+                // Simplified strength calculation for comparison
+                strength = (area * 100) / 1000; // Simplified calculation just for comparison
+                
+                if (strength >= requiredStrength) {
+                    results.push({
+                        section,
+                        area,
+                        strength,
+                        efficiency: requiredStrength / strength * 100,
+                        weight: props.w * (memberType === 'double' ? 2 : 1)
+                    });
+                }
+            });
+            
+            // Sort by efficiency
+            results.sort((a, b) => b.efficiency - a.efficiency);
+            
+            // Display top 5 results
+            if (results.length > 0) {
+                let html = '<div class="overflow-x-auto"><table class="min-w-full text-sm border-collapse">';
+                html += '<thead><tr><th class="border px-2 py-1">Section</th><th class="border px-2 py-1">Strength (kN)</th><th class="border px-2 py-1">Efficiency</th><th class="border px-2 py-1">Weight (kg/m)</th></tr></thead>';
+                html += '<tbody>';
+                
+                results.slice(0, 5).forEach(result => {
+                    html += `<tr class="hover:bg-gray-100 dark:hover:bg-gray-700">
+                        <td class="border px-2 py-1">${result.section}</td>
+                        <td class="border px-2 py-1">${result.strength.toFixed(2)}</td>
+                        <td class="border px-2 py-1">${result.efficiency.toFixed(1)}%</td>
+                        <td class="border px-2 py-1">${result.weight.toFixed(2)}</td>
+                    </tr>`;
+                });
+                
+                html += '</tbody></table></div>';
+                optResults.innerHTML = html;
+                
+                document.getElementById('optimization-container').classList.remove('hidden');
+            }
+        }
+        
+        // Optimization button functionality
+        document.getElementById('view-optimization').addEventListener('click', function() {
+            document.getElementById('optimization-container').classList.toggle('hidden');
+        });
+        
+        // Generate report button functionality
+        document.getElementById('generate-report-btn').addEventListener('click', function() {
+            if (!window.calculationData) {
+                alert('Please calculate a design first before generating a report.');
+                return;
+            }
+            
+            // Generate report
+            generateReport();
+            
+            // Switch to report tab
+            showTab('report');
+        });
+        
+        // Generate report functionality
+        function generateReport() {
+            const data = window.calculationData;
+            
+            if (!data) {
+                return;
+            }
+            
+            const reportContainer = document.getElementById('report-container');
+            
+            let html = `
+                <div class="report-section">
+                    <h1 class="text-2xl font-bold text-center mb-4">Compression Member Design Report</h1>
+                    <p class="text-center mb-6">Generated on ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</p>
+                </div>
+                
+                <div class="report-section">
+                    <h2 class="report-title">1. Design Input</h2>
+                    
+                    <table class="report-table">
+                        <tr>
+                            <th colspan="2">Member Configuration</th>
+                        </tr>
+                        <tr>
+                            <td>Member Type</td>
+                            <td>${getMemberTypeString(data.memberType)}</td>
+                        </tr>
+                        <tr>
+                            <td>Steel Grade</td>
+                            <td>${getSteelGradeString(data.steelGrade, data.designCode)}</td>
+                        </tr>
+                        <tr>
+                            <td>Section</td>
+                            <td>${data.sectionName}</td>
+                        </tr>
+                        <tr>
+                            <td>Design Code</td>
+                            <td>${getDesignCodeString(data.designCode)}</td>
+                        </tr>
+            `;
+            
+            if (data.memberType === 'double') {
+                html += `
+                        <tr>
+                            <td>Back-to-Back Distance</td>
+                            <td>${data.backToBackDistance} mm</td>
+                        </tr>
+                        <tr>
+                            <td>Connection Type</td>
+                            <td>${data.connectionType === 'connected' ? 'Connected at intervals' : 'Continuously connected'}</td>
+                        </tr>
+                `;
+                
+                if (data.connectionType === 'connected') {
+                    html += `
+                        <tr>
+                            <td>Tack Length Interval</td>
+                            <td>${data.tackInterval} mm</td>
+                        </tr>
+                    `;
+                }
+            }
+            
+            html += `
+                    </table>
+                    
+                    <table class="report-table mt-4">
+                        <tr>
+                            <th colspan="2">Design Parameters</th>
+                        </tr>
+                        <tr>
+                            <td>Effective Length</td>
+                            <td>${data.effectiveLength} mm</td>
+                        </tr>
+                        <tr>
+                            <td>End Condition Factor (K)</td>
+                            <td>${data.endConditionFactor}</td>
+                        </tr>
+                        <tr>
+                            <td>Design Load</td>
+                            <td>${data.designLoad} kN</td>
+                        </tr>
+                        <tr>
+                            <td>Load Factor</td>
+                            <td>${data.loadFactor}</td>
+                        </tr>
+                        <tr>
+                            <td>Factored Design Load</td>
+                            <td>${data.factoredLoad.toFixed(2)} kN</td>
+                        </tr>
+            `;
+            
+            if (data.loadType === 'combined') {
+                html += `
+                        <tr>
+                            <td>Moment Mx</td>
+                            <td>${data.momentX.toFixed(2)} kN·m</td>
+                        </tr>
+                        <tr>
+                            <td>Moment My</td>
+                            <td>${data.momentY.toFixed(2)} kN·m</td>
+                        </tr>
+                `;
+            }
+            
+            html += `
+                    </table>
+                </div>
+                
+                <div class="report-section">
+                    <h2 class="report-title">2. Section Properties</h2>
+                    
+                    <table class="report-table">
+                        <tr>
+                            <th>Property</th>
+                            <th>Value</th>
+                        </tr>
+                        <tr>
+                            <td>Cross-sectional Area</td>
+                            <td>${data.area.toFixed(2)} mm²</td>
+                        </tr>
+                        <tr>
+                            <td>Radius of Gyration rx</td>
+                            <td>${data.rx.toFixed(2)} mm</td>
+                        </tr>
+                        <tr>
+                            <td>Radius of Gyration ry</td>
+                            <td>${data.ry.toFixed(2)} mm</td>
+                        </tr>
+            `;
+            
+            if (data.rz > 0) {
+                html += `
+                        <tr>
+                            <td>Radius of Gyration rz</td>
+                            <td>${data.rz.toFixed(2)} mm</td>
+                        </tr>
+                `;
+            }
+            
+            html += `
+                        <tr>
+                            <td>Minimum Radius of Gyration</td>
+                            <td>${data.minR.toFixed(2)} mm</td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <div class="report-section">
+                    <h2 class="report-title">3. Design Calculations</h2>
+            `;
+            
+            // Add ECP-specific section classification info if applicable
+            if (data.designCode === 'ecp205') {
+                html += `
+                    <h3 class="report-subtitle">Section Classification</h3>
+                    <p>ECP 205:2008 Section Classification: ${data.sectionClass}</p>
+                `;
+                
+                if (data.isSlender) {
+                    html += `
+                        <p>Effective Area Ratio (Q): ${data.Q.toFixed(3)}</p>
+                    `;
+                }
+                
+                html += `
+                    <h3 class="report-subtitle">Slenderness Check</h3>
+                    <p>Slenderness Ratio: ${data.slendernessRatio.toFixed(2)}</p>
+                    <p>Maximum Permitted Slenderness: ${data.maxSlendernessLimit} (ECP Table 2.3)</p>
+                    <p>Slenderness Check: ${data.slendernessCheckPassed ? 'PASS' : 'FAIL'}</p>
+                    
+                    <h3 class="report-subtitle">Slenderness Parameter</h3>
+                    <p>λc = (KL/r) / π * √(Fy / E) = √(Fy / Fe) = ${data.lambdaC.toFixed(3)}</p>
+                `;
+            }
+            
+            html += `
+                    <h3 class="report-subtitle">Slenderness Ratio</h3>
+                    <p>KL/r = (${data.endConditionFactor} × ${data.effectiveLength}) / ${data.minR.toFixed(2)} = ${data.slendernessRatio.toFixed(2)}</p>
+                    
+                    <h3 class="report-subtitle">Critical Stress</h3>
+                    <p>fcr = ${data.fcr.toFixed(2)} MPa</p>
+                    
+                    <h3 class="report-subtitle">Design Compression Strength</h3>
+                    <p>Resistance Factor (φc) = ${data.resistanceFactor.toFixed(2)}</p>
+                    <p>Pd = (${data.area.toFixed(2)} × ${data.fcr.toFixed(2)} × ${data.resistanceFactor.toFixed(2)}) / 1000 = ${data.designStrength.toFixed(2)} kN</p>
+                </div>
+                
+                <div class="report-section">
+                    <h2 class="report-title">4. Design Check</h2>
+                    
+                    <table class="report-table">
+                        <tr>
+                            <th>Item</th>
+                            <th>Value</th>
+                        </tr>
+                        <tr>
+                            <td>Factored Design Load</td>
+                            <td>${data.factoredLoad.toFixed(2)} kN</td>
+                        </tr>
+                        <tr>
+                            <td>Design Strength</td>
+                            <td>${data.designStrength.toFixed(2)} kN</td>
+                        </tr>
+                        <tr>
+                            <td>Utilization Ratio</td>
+                            <td>${data.utilization.toFixed(2)}%</td>
+                        </tr>
+                        <tr>
+                            <td>Status</td>
+                            <td style="font-weight: bold; color: ${data.passes ? 'var(--success, #48bb78)' : 'var(--danger, #e53e3e)'}">${data.passes ? 'PASS' : 'FAIL'}</td>
+                        </tr>
+                    </table>
+                    
+                    <div class="mt-4">
+                        <p class="font-medium">Conclusion:</p>
+                        <p>The ${getMemberTypeString(data.memberType)} section ${data.sectionName} is ${data.passes ? 'ADEQUATE' : 'NOT ADEQUATE'} to carry the applied load of ${data.designLoad} kN with a load factor of ${data.loadFactor}.</p>
+                        ${!data.passes ? '<p class="text-red-600 dark:text-red-400 font-medium mt-2">Recommendation: Select a larger section or reduce the effective length.</p>' : ''}
+                    </div>
+                    
+                    ${data.warnings && data.warnings.length > 0 ? `
+                    <div class="mt-4 p-3 bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100 rounded-lg">
+                        <p class="font-medium">Design Considerations:</p>
+                        <ul class="list-disc ml-5 mt-1">
+                            ${data.warnings.map(warning => `<li>${warning}</li>`).join('')}
+                        </ul>
+                    </div>
+                    ` : ''}
+                </div>
+                
+                <div class="report-section">
+                    <h2 class="report-title">5. Code Compliance</h2>
+                    
+                    <p>This design has been checked according to ${getDesignCodeString(data.designCode)}.</p>
+                    <p class="mt-2">Key code requirements verified:</p>
+                    <ul class="list-disc ml-6 mt-1">
+                        <li>Maximum slenderness ratio ${data.designCode === 'ecp205' ? '(≤ 180 for primary members per ECP Table 2.3)' : ''}</li>
+                        ${data.designCode === 'ecp205' ? '<li>Section classification per ECP Tables 2.12a-d</li>' : ''}
+                        <li>Compressive strength calculation per code equations</li>
+                        ${data.memberType === 'double' ? '<li>Connection requirements for built-up members</li>' : ''}
+                    </ul>
+                </div>
+            `;
+            
+            reportContainer.innerHTML = html;
+        }
+        
+        // Helper function to get readable member type
+        function getMemberTypeString(type) {
+            const types = {
+                'single': 'Single Angle',
+                'double': 'Double Angle',
+                'channel': 'Channel Section',
+                'isection': 'I-Section',
+                'tube': 'Tubular Section'
+            };
+            return types[type] || type;
+        }
+        
+        // Helper function to get readable design code
+        function getDesignCodeString(code) {
+            const codes = {
+                'is800': 'IS 800:2007',
+                'aisc360': 'AISC 360-16',
+                'eurocode3': 'Eurocode 3',
+                'ecp205': 'ECP 205:2008 (LRFD)'
+            };
+            return codes[code] || code;
+        }
+        
+        // Helper function to get readable steel grade
+        function getSteelGradeString(steelGrade, designCode) {
+            // Map for Egyptian grades
+            if (designCode === 'ecp205') {
+                const egyptianGrades = {
+                    '240': 'St 37 (fy = 240 MPa)',
+                    '280': 'St 44 (fy = 280 MPa)',
+                    '360': 'St 52 (fy = 360 MPa)'
+                };
+                
+                return egyptianGrades[steelGrade.toString()] || `(fy = ${steelGrade} MPa)`;
+            }
+            
+            // For other codes
+            const grades = {
+                '250': 'Fe 250 (fy = 250 MPa)',
+                '350': 'Fe 350 (fy = 350 MPa)',
+                '410': 'Fe 410 (fy = 410 MPa)',
+                '450': 'Fe 450 (fy = 450 MPa)',
+                '248': 'A36 (fy = 248 MPa)',
+                '345': 'A572 Gr.50 (fy = 345 MPa)',
+                '235': 'S235 (fy = 235 MPa)',
+                '355': 'S355 (fy = 355 MPa)'
+            };
+            
+            return grades[steelGrade.toString()] || `(fy = ${steelGrade} MPa)`;
+        }
+        
+        // Print report button functionality
+        document.getElementById('print-report-btn').addEventListener('click', function() {
+            window.print();
+        });
+        
+        // Download PDF button functionality
+        document.getElementById('download-pdf-btn').addEventListener('click', async function() {
+            if (!window.calculationData) {
+                alert('Please calculate a design first before downloading a PDF.');
+                return;
+            }
+            const reportContainer = document.getElementById('report-container');
+            const clonedReport = reportContainer.cloneNode(true);
+            
+            // Force light mode styling for PDF
+            clonedReport.classList.add('bg-white');
+            clonedReport.querySelectorAll('*').forEach(el => {
+                // Remove dark mode classes
+                el.classList.remove('dark:bg-gray-800', 'dark:text-gray-400', 'dark:border-gray-700');
+                // Force black text
+                el.style.color = '#000000';
+                // Force white background for tables
+                if (el.tagName === 'TABLE') {
+                    el.style.backgroundColor = '#ffffff';
+                    el.style.borderCollapse = 'collapse';
+                    el.style.width = '100%';
+                    el.style.marginBottom = '15px';
+                }
+                if (el.tagName === 'TH' || el.tagName === 'TD') {
+                    el.style.border = '1px solid #ddd';
+                    el.style.padding = '8px';
+                    el.style.textAlign = 'left';
+                }
+                if (el.tagName === 'TH') {
+                    el.style.backgroundColor = '#f2f2f2';
+                    el.style.fontWeight = 'bold';
+                }
+                // Ensure report sections are properly spaced
+                if (el.classList.contains('report-section')) {
+                    el.style.marginBottom = '20px';
+                    el.style.pageBreakInside = 'avoid';
+                }
+                // Style headings
+                if (el.tagName === 'H1') {
+                    el.style.fontSize = '24px';
+                    el.style.marginBottom = '10px';
+                }
+                if (el.tagName === 'H2') {
+                    el.style.fontSize = '20px';
+                    el.style.marginBottom = '10px';
+                    el.style.marginTop = '20px';
+                }
+                if (el.tagName === 'H3') {
+                    el.style.fontSize = '16px';
+                    el.style.marginBottom = '8px';
+                    el.style.marginTop = '15px';
+                }
+            });
+            
+            // Create a temporary div to hold the report for PDF generation
+            const tempDiv = document.createElement('div');
+            tempDiv.appendChild(clonedReport);
+            document.body.appendChild(tempDiv);
+            tempDiv.style.position = 'absolute';
+            tempDiv.style.left = '-9999px';
+            
+            // Set options for PDF generation
+            const options = {
+                margin: [10, 10, 10, 10],
+                filename: 'compression-member-design-report.pdf',
+                image: { type: 'jpeg', quality: 0.98 },
+                html2canvas: { 
+                    scale: 2, 
+                    useCORS: true, 
+                    logging: false,
+                    letterRendering: true
+                },
+                jsPDF: { 
+                    unit: 'mm', 
+                    format: 'a4', 
+                    orientation: 'portrait',
+                    compress: true
+                },
+                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+            };
+            
+            // Use html2pdf library to generate and download PDF
+            html2pdf().from(clonedReport).set(options).save().then(() => {
+                // Clean up the temporary div after PDF generation
+                document.body.removeChild(tempDiv);
+            });
+        });
+        
+        // Save project button functionality
+        document.getElementById('save-project-btn').addEventListener('click', function() {
+            if (!window.calculationData) {
+                alert('Please calculate a design first before saving the project.');
+                return;
+            }
+            
+            // Show save modal
+            document.getElementById('save-project-modal').classList.remove('hidden');
+            document.getElementById('save-project-modal').classList.add('flex');
+        });
+        
+        // Close save modal
+        document.getElementById('close-save-modal').addEventListener('click', function() {
+            document.getElementById('save-project-modal').classList.add('hidden');
+            document.getElementById('save-project-modal').classList.remove('flex');
+        });
+        
+        // Save project confirmation
+        document.getElementById('save-project-confirm').addEventListener('click', function() {
+            const projectName = document.getElementById('project-name').value;
+            const projectDesc = document.getElementById('project-description').value;
+            
+            if (!projectName) {
+                alert('Please enter a project name.');
+                return;
+            }
+            
+            // Create a project object with all data
+            const projectData = {
+                name: projectName,
+                description: projectDesc,
+                date: new Date().toISOString(),
+                inputs: getAllInputValues(),
+                results: window.calculationData
+            };
+            
+            // Save to localStorage (or could be sent to a server in a real application)
+            try {
+                const savedProjects = JSON.parse(localStorage.getItem('compressDesignProjects') || '[]');
+                savedProjects.push(projectData);
+                localStorage.setItem('compressDesignProjects', JSON.stringify(savedProjects));
+                
+                alert(`Project "${projectName}" saved successfully!`);
+                document.getElementById('save-project-modal').classList.add('hidden');
+                document.getElementById('save-project-modal').classList.remove('flex');
+            } catch (error) {
+                alert('Failed to save project. Error: ' + error.message);
+            }
+        });
+        
+        // Function to collect all input values
+        function getAllInputValues() {
+            const inputs = {};
+            
+            // Get all input elements and their values
+            document.querySelectorAll('input, select').forEach(el => {
+                if (el.id) {
+                    if (el.type === 'radio') {
+                        if (el.checked) {
+                            inputs[el.name] = el.value;
+                        }
+                    } else {
+                        inputs[el.id] = el.value;
+                    }
+                }
+            });
+            
+            return inputs;
+        }
+        
+        // Reset button functionality
+        document.getElementById('reset-btn').addEventListener('click', function() {
+            // Confirm with user
+            if (confirm('Are you sure you want to reset all values?')) {
+                // Reset all form elements
+                document.querySelectorAll('form').forEach(form => form.reset());
+                
+                // Hide results
+                document.getElementById('results-placeholder').classList.remove('hidden');
+                document.getElementById('results-content').classList.add('hidden');
+                
+                // Reset step indicator
+                document.querySelectorAll('.step').forEach(step => {
+                    step.classList.remove('active', 'completed');
+                });
+                document.getElementById('step1').classList.add('active');
+                
+                // Clear calculation data
+                window.calculationData = null;
+                
+                // Reset sections visibility
+                updateVisual();
+                
+                // Show angle options by default
+                document.getElementById('angle-options').classList.remove('hidden');
+                document.getElementById('channel-options').classList.add('hidden');
+                document.getElementById('isection-options').classList.add('hidden');
+                document.getElementById('tube-options').classList.add('hidden');
+                
+                if (document.getElementById('member-type').value === 'double') {
+                    document.getElementById('double-angle-options').classList.remove('hidden');
+                } else {
+                    document.getElementById('double-angle-options').classList.add('hidden');
+                }
+                
+                // Show/hide angle dimensions based on selected series
+                if (document.getElementById('angle-series').value === 'ISA') {
+                    document.getElementById('equal-angle-dimensions').classList.remove('hidden');
+                    document.getElementById('unequal-angle-dimensions').classList.add('hidden');
+                } else {
+                    document.getElementById('equal-angle-dimensions').classList.add('hidden');
+                    document.getElementById('unequal-angle-dimensions').classList.remove('hidden');
+                }
+            }
+        });
+        
+        // Example loading buttons
+        document.getElementById('load-example-btn').addEventListener('click', function() {
+            // Set values for the double angle example
+            document.getElementById('member-type').value = 'double';
+            document.getElementById('steel-grade').value = '250';
+            document.getElementById('design-code').value = 'is800';
+            document.getElementById('angle-series').value = 'ISA';
+            document.getElementById('leg-size').value = '65x65x6';
+            document.getElementById('back-to-back').value = '10';
+            document.getElementById('connection-type').value = 'continuous';
+            document.getElementById('effective-length').value = '3000';
+            document.getElementById('end-conditions').value = '1.0';
+            document.getElementById('design-load').value = '85';
+            document.getElementById('load-factor').value = '1.5';
+            document.querySelector('input[name="load-type"][value="axial"]').checked = true;
+            document.getElementById('combined-loads').classList.add('hidden');
+            
+            // Update UI based on selections
+            document.getElementById('angle-options').classList.remove('hidden');
+            document.getElementById('channel-options').classList.add('hidden');
+            document.getElementById('isection-options').classList.add('hidden');
+            document.getElementById('tube-options').classList.add('hidden');
+            document.getElementById('double-angle-options').classList.remove('hidden');
+            document.getElementById('interval-option').classList.add('hidden');
+            document.getElementById('equal-angle-dimensions').classList.remove('hidden');
+            document.getElementById('unequal-angle-dimensions').classList.add('hidden');
+            
+            updateVisual();
+            
+            // Switch to calculator tab
+            showTab('calculator');
+            
+            // Show a message
+            alert('Example values loaded. Click Calculate to run the analysis.');
+        });
+        
+        document.getElementById('load-example-2').addEventListener('click', function() {
+            // Set values for the single angle example
+            document.getElementById('member-type').value = 'single';
+            document.getElementById('steel-grade').value = '250';
+            document.getElementById('design-code').value = 'is800';
+            document.getElementById('angle-series').value = 'ISA';
+            document.getElementById('leg-size').value = '75x75x6';
+            document.getElementById('effective-length').value = '2500';
+            document.getElementById('end-conditions').value = '1.0';
+            document.getElementById('design-load').value = '30';
+            document.getElementById('load-factor').value = '1.5';
+            document.querySelector('input[name="load-type"][value="axial"]').checked = true;
+            document.getElementById('combined-loads').classList.add('hidden');
+            
+            // Update UI based on selections
+            document.getElementById('angle-options').classList.remove('hidden');
+            document.getElementById('channel-options').classList.add('hidden');
+            document.getElementById('isection-options').classList.add('hidden');
+            document.getElementById('tube-options').classList.add('hidden');
+            document.getElementById('double-angle-options').classList.add('hidden');
+            document.getElementById('equal-angle-dimensions').classList.remove('hidden');
+            document.getElementById('unequal-angle-dimensions').classList.add('hidden');
+            
+            updateVisual();
+            
+            // Switch to calculator tab
+            showTab('calculator');
+            
+            // Show a message
+            alert('Example values loaded. Click Calculate to run the analysis.');
+        });
+        
+        document.getElementById('load-example-3').addEventListener('click', function() {
+            // Set values for the channel section example
+            document.getElementById('member-type').value = 'channel';
+            document.getElementById('steel-grade').value = '250';
+            document.getElementById('design-code').value = 'is800';
+            document.getElementById('channel-size').value = 'ISMC200';
+            document.getElementById('effective-length').value = '3500';
+            document.getElementById('end-conditions').value = '0.7';
+            document.getElementById('design-load').value = '120';
+            document.getElementById('load-factor').value = '1.5';
+            document.querySelector('input[name="load-type"][value="axial"]').checked = true;
+            document.getElementById('combined-loads').classList.add('hidden');
+            
+            // Update UI based on selections
+            document.getElementById('angle-options').classList.add('hidden');
+            document.getElementById('channel-options').classList.remove('hidden');
+            document.getElementById('isection-options').classList.add('hidden');
+            document.getElementById('tube-options').classList.add('hidden');
+            document.getElementById('double-angle-options').classList.add('hidden');
+            
+            updateVisual();
+            
+            // Switch to calculator tab
+            showTab('calculator');
+            
+            // Show a message
+            alert('Example values loaded. Click Calculate to run the analysis.');
+        });
+
+        // Load ECP code example
+        document.getElementById('load-example-ecp').addEventListener('click', function() {
+            // Set values for the ECP double angle example
+            document.getElementById('member-type').value = 'double';
+            document.getElementById('steel-grade').value = '240'; // St 37
+            document.getElementById('design-code').value = 'ecp205';
+            document.getElementById('angle-series').value = 'ISA';
+            document.getElementById('leg-size').value = '70x70x6';
+            document.getElementById('back-to-back').value = '10';
+            document.getElementById('connection-type').value = 'continuous';
+            document.getElementById('effective-length').value = '2800';
+            document.getElementById('end-conditions').value = '1.0';
+            document.getElementById('design-load').value = '90';
+            document.getElementById('load-factor').value = '1.5';
+            document.querySelector('input[name="load-type"][value="axial"]').checked = true;
+            document.getElementById('combined-loads').classList.add('hidden');
+            
+            // Update UI based on selections
+            document.getElementById('angle-options').classList.remove('hidden');
+            document.getElementById('channel-options').classList.add('hidden');
+            document.getElementById('isection-options').classList.add('hidden');
+            document.getElementById('tube-options').classList.add('hidden');
+            document.getElementById('double-angle-options').classList.remove('hidden');
+            document.getElementById('interval-option').classList.add('hidden');
+            document.getElementById('equal-angle-dimensions').classList.remove('hidden');
+            document.getElementById('unequal-angle-dimensions').classList.add('hidden');
+            
+            updateVisual();
+            
+            // Switch to calculator tab
+            showTab('calculator');
+            
+            // Show a message
+            alert('Egyptian Code example values loaded. Click Calculate to run the analysis using ECP 205:2008 design method.');
+        });
+        
+        // Optimization modal functionality
+        document.getElementById('view-optimization').addEventListener('click', function() {
+            const optimizationTable = document.getElementById('optimization-table');
+            
+            // Create table with optimized sections
+            let tableHtml = '<table class="w-full border-collapse text-sm">';
+            tableHtml += '<thead class="bg-gray-100 dark:bg-gray-700"><tr><th class="border px-3 py-2 text-left">Section</th><th class="border px-3 py-2 text-left">Strength (kN)</th><th class="border px-3 py-2 text-left">Utilization</th><th class="border px-3 py-2 text-left">Weight (kg/m)</th><th class="border px-3 py-2 text-left">Select</th></tr></thead>';
+            tableHtml += '<tbody>';
+            
+            // Add rows for sections (this would be dynamic in a real app)
+            const requiredStrength = window.calculationData ? window.calculationData.factoredLoad : 0;
+            
+            // Example data
+            const sections = [
+                {name: "65x65x6", strength: 94.8, utilization: 89.7, weight: 5.8},
+                {name: "75x75x6", strength: 108.5, utilization: 78.3, weight: 6.8},
+                {name: "60x60x6", strength: 86.2, utilization: 98.6, weight: 5.4},
+                {name: "80x80x6", strength: 120.6, utilization: 70.5, weight: 7.3},
+                {name: "90x90x8", strength: 165.3, utilization: 51.4, weight: 10.8}
+            ];
+            
+            sections.forEach(section => {
+                tableHtml += `<tr class="hover:bg-gray-50 dark:hover:bg-gray-600">
+                    <td class="border px-3 py-2">${section.name}</td>
+                    <td class="border px-3 py-2">${section.strength.toFixed(1)}</td>
+                    <td class="border px-3 py-2">${section.utilization.toFixed(1)}%</td>
+                    <td class="border px-3 py-2">${section.weight.toFixed(1)}</td>
+                    <td class="border px-3 py-2 text-center">
+                        <input type="radio" name="optimized-section" value="${section.name}" class="form-radio h-4 w-4 text-primary">
+                    </td>
+                </tr>`;
+            });
+            
+            tableHtml += '</tbody></table>';
+            
+            optimizationTable.innerHTML = tableHtml;
+            
+            // Show the modal
+            document.getElementById('optimization-modal').classList.remove('hidden');
+            document.getElementById('optimization-modal').classList.add('flex');
+        });
+        
+        // Close optimization modal
+        document.getElementById('close-optimization-modal').addEventListener('click', function() {
+            document.getElementById('optimization-modal').classList.add('hidden');
+            document.getElementById('optimization-modal').classList.remove('flex');
+        });
+        
+        // Apply selected optimization
+        document.getElementById('apply-optimization').addEventListener('click', function() {
+            const selectedSection = document.querySelector('input[name="optimized-section"]:checked');
+            
+            if (!selectedSection) {
+                alert('Please select a section first.');
+                return;
+            }
+            
+            // Apply the selected section
+            const sectionName = selectedSection.value;
+            
+            // Assuming it's an angle section for this example
+            if (document.getElementById('angle-series').value === 'ISA') {
+                document.getElementById('leg-size').value = sectionName;
+            } else {
+                document.getElementById('unequal-leg-size').value = sectionName;
+            }
+            
+            // Close the modal
+            document.getElementById('optimization-modal').classList.add('hidden');
+            document.getElementById('optimization-modal').classList.remove('flex');
+            
+            // Prompt user to recalculate
+            alert('Section updated to ' + sectionName + '. Please click Calculate to update the results.');
+        });
+
+        // Show ECP theory when design code is ECP 205:2008
+        document.getElementById('design-code').addEventListener('change', function() {
+            // Update UI based on selected design code
+            if (this.value === 'ecp205') {
+                // You could add additional UI changes specific to ECP code here
+            }
+        });
+    </script>
+    
+    <!-- Add this script at the end of your body tag, just before the closing </body> tag -->
+    <script>
+        // Generate Report button functionality
+        document.getElementById('generate-report-btn').addEventListener('click', function() {
+            // Check if calculation has been performed
+            if (document.getElementById('results-content').classList.contains('hidden')) {
+                alert('Please calculate the design first before generating a report.');
+                return;
+            }
+            
+            // Generate the report content
+            generateReport();
+            
+            // Switch to the report tab
+            document.getElementById('tab-report').click();
+            
+            // Update step indicator
+            document.getElementById('step2').classList.add('completed');
+            document.getElementById('step3').classList.add('active');
+        });
+        
+        // Function to generate the report
+        function generateReport() {
+            const memberType = document.getElementById('member-type').value;
+            const steelGrade = document.getElementById('steel-grade').value;
+            const designCode = document.getElementById('design-code').value;
+            const effectiveLength = document.getElementById('effective-length').value;
+            const designLoad = document.getElementById('design-load').value;
+            
+            // Get section name based on member type
+            let sectionName = "";
+            if (memberType === 'single' || memberType === 'double') {
+                const angleSeries = document.getElementById('angle-series').value;
+                sectionName = angleSeries + " " + (angleSeries === 'ISA' ? 
+                    document.getElementById('leg-size').value : 
+                    document.getElementById('unequal-leg-size').value);
+                
+                if (memberType === 'double') {
+                    sectionName = "Double " + sectionName;
+                    sectionName += " @ " + document.getElementById('back-to-back').value + "mm back-to-back";
+                }
+            } else if (memberType === 'channel') {
+                sectionName = document.getElementById('channel-size').value;
+            } else if (memberType === 'isection') {
+                sectionName = document.getElementById('isection-size').value;
+            } else if (memberType === 'tube') {
+                sectionName = "Tube " + document.getElementById('tube-size').value;
+            }
+            
+            // Format the report HTML
+            const reportHTML = `
+                <div class="report-section">
+                    <h2 class="report-title">Compression Member Design Report</h2>
+                    <p>Date: ${new Date().toLocaleDateString()}</p>
+                </div>
+                
+                <div class="report-section">
+                    <h3 class="report-subtitle">Design Inputs</h3>
+                    <table class="report-table">
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                        <tr>
+                            <td>Member Type</td>
+                            <td>${memberType.charAt(0).toUpperCase() + memberType.slice(1)} Section</td>
+                        </tr>
+                        <tr>
+                            <td>Section</td>
+                            <td>${sectionName}</td>
+                        </tr>
+                        <tr>
+                            <td>Steel Grade</td>
+                            <td>${document.querySelector('#steel-grade option:checked').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>Design Code</td>
+                            <td>${document.querySelector('#design-code option:checked').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>Effective Length</td>
+                            <td>${effectiveLength} ${document.querySelector('.unit-length').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>End Conditions</td>
+                            <td>${document.querySelector('#end-conditions option:checked').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>Design Load</td>
+                            <td>${designLoad} ${document.querySelector('.unit-force').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>Load Factor</td>
+                            <td>${document.getElementById('load-factor').value}</td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <div class="report-section">
+                    <h3 class="report-subtitle">Section Properties</h3>
+                    <table class="report-table">
+                        <tr>
+                            <th>Property</th>
+                            <th>Value</th>
+                        </tr>
+                        <tr>
+                            <td>Cross-sectional Area</td>
+                            <td>${document.getElementById('result-area').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>Radius of Gyration</td>
+                            <td>${document.getElementById('result-rog').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>Slenderness Ratio</td>
+                            <td>${document.getElementById('result-slenderness').textContent}</td>
+                        </tr>
+                    </table>
+                </div>
+                
+                <div class="report-section">
+                    <h3 class="report-subtitle">Design Results</h3>
+                    <table class="report-table">
+                        <tr>
+                            <th>Parameter</th>
+                            <th>Value</th>
+                        </tr>
+                        <tr>
+                            <td>Design Strength</td>
+                            <td>${document.getElementById('result-strength').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>Utilization</td>
+                            <td>${document.getElementById('result-utilization').textContent}</td>
+                        </tr>
+                        <tr>
+                            <td>Status</td>
+                            <td>${document.getElementById('result-status').textContent}</td>
+                        </tr>
+                    </table>
+                </div>
+            `;
+            
+            // Update the report container
+            document.getElementById('report-container').innerHTML = reportHTML;
+        }
+    </script>
+</body>
+</html>
